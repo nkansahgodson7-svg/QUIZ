@@ -19,13 +19,14 @@ import { Logo } from '../components/Logo'
 import { TimerBar } from '../components/Timer'
 import { useCountdown } from '../hooks/useCountdown'
 import {
-  normalizeLeaderboard,
+  isHostGameEnded,
   type AnswerCount,
   type GameQuestion,
   type GameSocket,
   type LeaderRow,
 } from '../lib/contract'
-import { createSocket } from '../lib/socket'
+import { loadHostToken, saveHostToken } from '../lib/host-storage'
+import { createSocket, IS_DEFAULT_SERVER } from '../lib/socket'
 
 type HostPhase = 'setup' | 'creating' | 'lobby' | 'live' | 'ended'
 
@@ -39,6 +40,16 @@ const OPTION_ACCENTS = [
 export function HostPage() {
   const socketRef = useRef<GameSocket | null>(null)
   const copyTimer = useRef<number | null>(null)
+  const pendingCreateRef = useRef<string | null>(null)
+
+  const [token, setToken] = useState(() => {
+    const stored = loadHostToken()
+    if (stored) return stored
+    const envToken = (import.meta.env.VITE_HOST_TOKEN as string | undefined)?.trim()
+    if (envToken) return envToken
+    return IS_DEFAULT_SERVER ? 'mock-host-token' : ''
+  })
+  const authTokenRef = useRef(token)
 
   const [connection, setConnection] = useState<ConnectionState>('connecting')
   const [phase, setPhase] = useState<HostPhase>('setup')
@@ -52,15 +63,26 @@ export function HostPage() {
   const [copied, setCopied] = useState<'code' | 'link' | null>(null)
 
   useEffect(() => {
-    const socket = createSocket()
+    const socket = createSocket({ token: authTokenRef.current })
     socketRef.current = socket
 
     socket.on('connect', () => {
       setConnection('connected')
-      setError(null)
+      const pendingQuizId = pendingCreateRef.current
+      if (pendingQuizId) {
+        pendingCreateRef.current = null
+        socket.emit('host:create_room', { quizId: pendingQuizId })
+      }
     })
     socket.on('disconnect', () => setConnection('offline'))
-    socket.on('connect_error', () => setConnection('offline'))
+    socket.on('connect_error', () => {
+      setConnection('offline')
+      if (pendingCreateRef.current) {
+        pendingCreateRef.current = null
+        setPhase((current) => (current === 'creating' ? 'setup' : current))
+        setError('Could not connect to the game server. Check the URL and try again.')
+      }
+    })
 
     socket.on('room:created', ({ code: roomCode }) => {
       setCode(roomCode)
@@ -75,7 +97,8 @@ export function HostPage() {
     })
     socket.on('game:answer_count', (payload) => setAnswered(payload))
     socket.on('game:ended', (payload) => {
-      setLeaderboard(normalizeLeaderboard(payload.leaderboard ?? payload.top5))
+      if (!isHostGameEnded(payload)) return
+      setLeaderboard(payload.leaderboard)
       setPhase('ended')
     })
     socket.on('error', (payload) => {
@@ -118,10 +141,31 @@ export function HostPage() {
 
   function createRoom(event: React.FormEvent) {
     event.preventDefault()
-    if (!socketRef.current) return
+    const socket = socketRef.current
+    if (!socket) return
+
+    const nextToken = token.trim()
+    if (!nextToken) {
+      setError('Enter the host JWT before opening a room.')
+      return
+    }
+
+    const nextQuizId = quizId.trim() || 'demo-quiz'
+    saveHostToken(nextToken)
     setError(null)
     setPhase('creating')
-    socketRef.current.emit('host:create_room', { quizId: quizId.trim() || 'demo-quiz' })
+
+    if (nextToken !== authTokenRef.current || !socket.connected) {
+      pendingCreateRef.current = nextQuizId
+      authTokenRef.current = nextToken
+      socket.auth = { token: nextToken }
+      setConnection('connecting')
+      if (socket.connected) socket.disconnect()
+      socket.connect()
+      return
+    }
+
+    socket.emit('host:create_room', { quizId: nextQuizId })
   }
 
   function startGame() {
@@ -175,9 +219,10 @@ export function HostPage() {
           <SetupView
             quizId={quizId}
             onQuizIdChange={setQuizId}
+            token={token}
+            onTokenChange={setToken}
             onSubmit={createRoom}
             creating={phase === 'creating'}
-            online={connection === 'connected'}
           />
         ) : phase === 'lobby' ? (
           <LobbyView
@@ -200,12 +245,7 @@ export function HostPage() {
             ended={countdown.ended}
           />
         ) : phase === 'ended' ? (
-          <EndedView
-            code={code}
-            playerCount={playerCount}
-            leaderboard={leaderboard}
-            onNewRoom={newRoom}
-          />
+          <EndedView code={code} leaderboard={leaderboard} onNewRoom={newRoom} />
         ) : null}
       </main>
 
@@ -223,15 +263,17 @@ export function HostPage() {
 function SetupView({
   quizId,
   onQuizIdChange,
+  token,
+  onTokenChange,
   onSubmit,
   creating,
-  online,
 }: {
   quizId: string
   onQuizIdChange: (value: string) => void
+  token: string
+  onTokenChange: (value: string) => void
   onSubmit: (event: React.FormEvent) => void
   creating: boolean
-  online: boolean
 }) {
   return (
     <div className="mx-auto my-auto w-full max-w-lg py-8 animate-rise">
@@ -263,11 +305,24 @@ function SetupView({
           Use the real server&apos;s quiz ID when it lands.
         </p>
 
-        <button
-          type="submit"
-          disabled={creating || !online}
-          className="btn-primary mt-6 w-full"
-        >
+        <label htmlFor="host-token" className="mt-5 block text-sm font-medium text-mist-200">
+          Host token (JWT)
+        </label>
+        <input
+          id="host-token"
+          value={token}
+          onChange={(event) => onTokenChange(event.target.value)}
+          placeholder="Paste the token from /api/auth/login"
+          autoComplete="off"
+          spellCheck={false}
+          className="field mt-2 font-mono text-sm"
+        />
+        <p className="mt-2.5 text-xs leading-relaxed text-mist-500">
+          Sent on the Socket.IO handshake. The mock accepts any non-empty token and pre-fills{' '}
+          <code className="rounded bg-white/8 px-1.5 py-0.5 text-mist-300">mock-host-token</code>.
+        </p>
+
+        <button type="submit" disabled={creating} className="btn-primary mt-6 w-full">
           {creating ? (
             <>
               <Loader2 className="size-4 animate-spin" />
@@ -280,11 +335,6 @@ function SetupView({
             </>
           )}
         </button>
-        {!online && (
-          <p className="mt-3 text-center text-xs text-mist-500">
-            Waiting for the game server before you can open a room.
-          </p>
-        )}
       </form>
     </div>
   )
@@ -469,12 +519,10 @@ function LiveView({
 
 function EndedView({
   code,
-  playerCount,
   leaderboard,
   onNewRoom,
 }: {
   code: string
-  playerCount: number
   leaderboard: LeaderRow[]
   onNewRoom: () => void
 }) {
@@ -482,7 +530,9 @@ function EndedView({
     <div className="mx-auto my-auto w-full max-w-2xl py-6 animate-rise">
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
-          <p className="eyebrow">Room {code} · {playerCount} players</p>
+          <p className="eyebrow">
+            Room {code} · {leaderboard.length} players
+          </p>
           <h1 className="mt-2 text-4xl font-bold tracking-tight">Final standings</h1>
         </div>
         <button type="button" onClick={onNewRoom} className="btn-ghost px-4 py-2.5 text-sm">

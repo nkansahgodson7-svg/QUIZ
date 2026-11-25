@@ -19,8 +19,7 @@ import { Logo } from '../components/Logo'
 import { TimerRing } from '../components/Timer'
 import { useCountdown } from '../hooks/useCountdown'
 import {
-  normalizeLeaderboard,
-  type GameEndedPayload,
+  isPlayerGameEnded,
   type GameQuestion,
   type GameSocket,
   type JoinedPayload,
@@ -79,7 +78,6 @@ export function PlayerPage() {
   const [code, setCode] = useState(initial.code)
   const [nickname, setNickname] = useState('')
   const [me, setMe] = useState<JoinedPayload | null>(null)
-  const [playerCount, setPlayerCount] = useState(0)
   const [question, setQuestion] = useState<GameQuestion | null>(null)
   const [selection, setSelection] = useState<{ index: number; choiceIndex: number } | null>(null)
   const [result, setResult] = useState<PlayerResult | null>(null)
@@ -123,11 +121,13 @@ export function PlayerPage() {
       setPhase('lobby')
     })
 
-    socket.on('lobby:update', ({ playerCount: count }) => setPlayerCount(count))
-
     socket.on('game:question', (payload) => {
       setQuestion(payload)
-      setSelection(null)
+      setSelection(
+        payload.myChoiceIndex == null
+          ? null
+          : { index: payload.index, choiceIndex: payload.myChoiceIndex },
+      )
       setResult(null)
       setPhase('question')
     })
@@ -137,11 +137,12 @@ export function PlayerPage() {
       setPhase('reveal')
     })
 
-    socket.on('game:ended', (payload: GameEndedPayload) => {
+    socket.on('game:ended', (payload) => {
+      if (!isPlayerGameEnded(payload)) return
       setFinal({
-        rank: payload.yourRank ?? 0,
-        score: payload.yourScore ?? 0,
-        rows: normalizeLeaderboard(payload.top5),
+        rank: payload.yourRank,
+        score: payload.yourScore,
+        rows: payload.top5,
       })
       setPhase('ended')
     })
@@ -236,7 +237,6 @@ export function PlayerPage() {
     setSelection(null)
     setResult(null)
     setFinal(null)
-    setPlayerCount(0)
     setError(null)
     navigate('/play', { replace: true })
     setPhase('join')
@@ -292,11 +292,7 @@ export function PlayerPage() {
             onCancel={cancelJoining}
           />
         ) : phase === 'lobby' ? (
-          <LobbyView
-            nickname={me?.nickname ?? nickname}
-            code={code}
-            playerCount={playerCount}
-          />
+          <LobbyView nickname={me?.nickname ?? nickname} code={code} />
         ) : phase === 'question' && question ? (
           <QuestionView
             question={question}
@@ -308,7 +304,7 @@ export function PlayerPage() {
             online={connection === 'connected'}
             onChoose={chooseAnswer}
           />
-        ) : phase === 'reveal' && question && result ? (
+        ) : phase === 'reveal' && result ? (
           <RevealView
             question={question}
             result={result}
@@ -453,15 +449,7 @@ function JoiningView({
   )
 }
 
-function LobbyView({
-  nickname,
-  code,
-  playerCount,
-}: {
-  nickname: string
-  code: string
-  playerCount: number
-}) {
+function LobbyView({ nickname, code }: { nickname: string; code: string }) {
   return (
     <div className="my-auto py-8 text-center animate-rise">
       <div className="relative mx-auto grid size-24 place-items-center">
@@ -478,9 +466,6 @@ function LobbyView({
       <div className="mt-4 flex items-center justify-center gap-2 text-sm text-mist-400">
         <span className="rounded-full border border-white/10 bg-white/[0.04] px-3 py-1.5 tabular-nums">
           Room {code}
-        </span>
-        <span className="rounded-full border border-white/10 bg-white/[0.04] px-3 py-1.5 tabular-nums">
-          {playerCount} {playerCount === 1 ? 'player' : 'players'}
         </span>
       </div>
 
@@ -617,7 +602,7 @@ function RevealView({
   selectedChoice,
   nickname,
 }: {
-  question: GameQuestion
+  question: GameQuestion | null
   result: PlayerResult
   selectedChoice: number | null
   nickname: string
@@ -628,9 +613,7 @@ function RevealView({
 
   return (
     <div className="flex flex-1 flex-col py-2 animate-rise">
-      <p className="eyebrow">
-        Question {question.index + 1} · results
-      </p>
+      <p className="eyebrow">Question {(question?.index ?? result.index) + 1} · results</p>
       <div className="mt-1 flex items-end justify-between gap-4">
         <h1 className="text-4xl font-bold tracking-tight">{heading}</h1>
         {correct ? (
@@ -672,41 +655,51 @@ function RevealView({
         </div>
       </div>
 
-      <h2 className="mt-6 text-xl leading-snug font-semibold text-balance">{question.text}</h2>
+      {question && (
+        <>
+          <h2 className="mt-6 text-xl leading-snug font-semibold text-balance">
+            {question.text}
+          </h2>
 
-      <div className="mt-4 flex flex-col gap-2.5">
-        {question.options.map((option, index) => {
-          const isCorrect = index === result.correctIndex
-          const isWrongPick = selectedChoice === index && !isCorrect
-          return (
-            <div
-              key={index}
-              className={`flex items-center gap-3 rounded-2xl border px-4 py-3 ${
-                isCorrect
-                  ? 'border-acid-400/60 bg-acid-400/12'
-                  : isWrongPick
-                    ? 'border-coral-400/50 bg-coral-400/10'
-                    : 'border-white/8 bg-white/[0.025] opacity-65'
-              }`}
-            >
-              <span
-                className={`grid size-8 shrink-0 place-items-center rounded-lg text-xs font-bold ${
-                  isCorrect
-                    ? 'bg-acid-400 text-night-950'
-                    : isWrongPick
-                      ? 'bg-coral-400 text-night-950'
-                      : `${OPTION_ACCENTS[index % OPTION_ACCENTS.length]} opacity-75`
-                }`}
-              >
-                {String.fromCharCode(65 + index)}
-              </span>
-              <span className="min-w-0 flex-1 text-sm font-medium">{option}</span>
-              {isCorrect && <Check className="size-4 shrink-0 text-acid-300" strokeWidth={3} />}
-              {isWrongPick && <X className="size-4 shrink-0 text-coral-400" strokeWidth={3} />}
-            </div>
-          )
-        })}
-      </div>
+          <div className="mt-4 flex flex-col gap-2.5">
+            {question.options.map((option, index) => {
+              const isCorrect = index === result.correctIndex
+              const isWrongPick = selectedChoice === index && !isCorrect
+              return (
+                <div
+                  key={index}
+                  className={`flex items-center gap-3 rounded-2xl border px-4 py-3 ${
+                    isCorrect
+                      ? 'border-acid-400/60 bg-acid-400/12'
+                      : isWrongPick
+                        ? 'border-coral-400/50 bg-coral-400/10'
+                        : 'border-white/8 bg-white/[0.025] opacity-65'
+                  }`}
+                >
+                  <span
+                    className={`grid size-8 shrink-0 place-items-center rounded-lg text-xs font-bold ${
+                      isCorrect
+                        ? 'bg-acid-400 text-night-950'
+                        : isWrongPick
+                          ? 'bg-coral-400 text-night-950'
+                          : `${OPTION_ACCENTS[index % OPTION_ACCENTS.length]} opacity-75`
+                    }`}
+                  >
+                    {String.fromCharCode(65 + index)}
+                  </span>
+                  <span className="min-w-0 flex-1 text-sm font-medium">{option}</span>
+                  {isCorrect && (
+                    <Check className="size-4 shrink-0 text-acid-300" strokeWidth={3} />
+                  )}
+                  {isWrongPick && (
+                    <X className="size-4 shrink-0 text-coral-400" strokeWidth={3} />
+                  )}
+                </div>
+              )
+            })}
+          </div>
+        </>
+      )}
 
       <div className="mt-6">
         <div className="mb-2.5 flex items-center justify-between">
@@ -716,7 +709,7 @@ function RevealView({
             Next up soon
           </span>
         </div>
-        <Leaderboard rows={normalizeLeaderboard(result.top5)} highlight={nickname} limit={5} />
+        <Leaderboard rows={result.top5} highlight={nickname} limit={5} />
       </div>
     </div>
   )

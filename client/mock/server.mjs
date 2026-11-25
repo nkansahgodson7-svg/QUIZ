@@ -1,19 +1,24 @@
 /**
- * Mock game server for the client. Speaks only the events in SPEC.md section 8.
+ * Mock game server for the client. Implements only the events in CONTRACT.md.
  *
  *   node mock/server.mjs        (or npm run mock)
  *
- * It keeps rooms in memory, drives a 5-question demo quiz, answers for a set of
- * fake players, and handles joins, rejoin tokens, and late joins. Replace it by
- * pointing VITE_SERVER_URL at the real server.
+ * Hosts authenticate on the Socket.IO handshake. There is no REST auth in the
+ * mock, so any non-empty token is treated as a valid host token:
+ *
+ *   io('http://localhost:4000', { auth: { token: 'mock-host-token' } })
+ *
+ * Rooms live in memory, a 5-question demo quiz runs on timers, and fake players
+ * answer so the lobby and leaderboard are populated during development.
  */
 import { createServer } from 'node:http'
 import { randomUUID } from 'node:crypto'
 import { Server } from 'socket.io'
 
 const PORT = Number(process.env.MOCK_PORT || 4000)
-const QUESTION_LEAD_MS = 1500
 const REVEAL_MS = 5000
+const MAX_PLAYERS = 300
+const BOT_TARGET = 14
 
 const QUIZ = {
   id: 'demo-quiz',
@@ -73,7 +78,6 @@ const BOT_NAMES = [
   'Ines',
   'Tobi',
 ]
-const BOT_TARGET = 14
 
 /** @type {Map<string, any>} */
 const rooms = new Map()
@@ -101,6 +105,22 @@ function fail(socket, code, message) {
   log('error ->', code, message)
 }
 
+function readHostToken(socket) {
+  const raw = socket.handshake.auth?.token ?? socket.handshake.query?.token
+  if (typeof raw !== 'string') return null
+  const token = raw.replace(/^Bearer\s+/i, '').trim()
+  return token || null
+}
+
+function requireHost(socket) {
+  const token = readHostToken(socket)
+  if (!token) {
+    fail(socket, 'AUTH_REQUIRED', 'Host authentication is required.')
+    return null
+  }
+  return token
+}
+
 function newCode() {
   let code
   do {
@@ -109,7 +129,7 @@ function newCode() {
   return code
 }
 
-function makePlayer(nickname, { bot = false, socketId = null } = {}) {
+function makePlayer(nickname, { bot = false, socketId = null, eligibleFromIndex = 0 } = {}) {
   return {
     id: randomUUID(),
     token: randomUUID(),
@@ -117,15 +137,15 @@ function makePlayer(nickname, { bot = false, socketId = null } = {}) {
     score: 0,
     bot,
     socketId,
+    eligibleFromIndex,
     lastPoints: 0,
+    lastAnswer: null,
+    lastResult: null,
   }
 }
 
 function uniqueNickname(room, raw) {
-  const base = String(raw ?? '')
-    .trim()
-    .replace(/\s+/g, ' ')
-    .slice(0, 24) || 'Player'
+  const base = raw.trim().replace(/\s+/g, ' ').slice(0, 24)
   const taken = new Set([...room.players.values()].map((p) => p.nickname.toLowerCase()))
   if (!taken.has(base.toLowerCase())) return base
   let n = 2
@@ -133,12 +153,18 @@ function uniqueNickname(room, raw) {
   return `${base}${n}`
 }
 
-function playerCount(room) {
-  return room.players.size
+function showLobby(room) {
+  if (room.phase !== 'lobby') return
+  const payload = { playerCount: room.players.size }
+  for (const id of hostSockets(room)) io.to(id).emit('lobby:update', payload)
 }
 
-function showLobby(room) {
-  io.to(room.code).emit('lobby:update', { playerCount: playerCount(room) })
+function hostSockets(room) {
+  return [...room.hostSockets].filter((id) => io.sockets.sockets.has(id))
+}
+
+function emitToHosts(room, event, payload) {
+  for (const id of hostSockets(room)) io.to(id).emit(event, payload)
 }
 
 function ranked(room) {
@@ -157,9 +183,19 @@ function ranked(room) {
 
 function topRows(rows, n = 5) {
   return rows.slice(0, n).map(({ player, rank }) => ({
-    rank,
+    playerId: player.id,
     nickname: player.nickname,
     totalScore: player.score,
+    rank,
+  }))
+}
+
+function fullRows(room) {
+  return ranked(room).map(({ player, rank }) => ({
+    playerId: player.id,
+    nickname: player.nickname,
+    totalScore: player.score,
+    rank,
   }))
 }
 
@@ -167,12 +203,29 @@ function rankOf(rows, player) {
   return rows.find((row) => row.player.id === player.id)?.rank ?? rows.length
 }
 
-function hostSockets(room) {
-  return [...room.hostSockets].filter((id) => io.sockets.sockets.has(id))
+function eligible(room, player) {
+  return player.eligibleFromIndex <= room.qIndex
 }
 
-function emitToHosts(room, event, payload) {
-  for (const id of hostSockets(room)) io.to(id).emit(event, payload)
+function eligibleCount(room) {
+  return [...room.players.values()].filter((player) => eligible(room, player)).length
+}
+
+function questionPayload(room, player = null) {
+  return {
+    ...room.question,
+    myChoiceIndex: player ? (room.answers.get(player.id)?.choiceIndex ?? null) : null,
+  }
+}
+
+function emitQuestionToEveryone(room) {
+  for (const id of hostSockets(room)) {
+    io.to(id).emit('game:question', questionPayload(room))
+  }
+  for (const player of room.players.values()) {
+    if (player.bot || !player.socketId) continue
+    io.to(player.socketId).emit('game:question', questionPayload(room, player))
+  }
 }
 
 function emitAnswerCount(room) {
@@ -180,7 +233,7 @@ function emitAnswerCount(room) {
   emitToHosts(room, 'game:answer_count', {
     index: room.question.index,
     answered: room.answers.size,
-    total: playerCount(room),
+    total: eligibleCount(room),
   })
 }
 
@@ -195,7 +248,8 @@ function clearTimers(room) {
 
 function recordAnswer(room, player, choiceIndex, at) {
   if (room.phase !== 'question' || !room.question) return false
-  if (at < room.qStartsAt || at > room.qEndsAt) return false
+  if (at >= room.qEndsAt) return false
+  if (!eligible(room, player)) return false
   room.answers.set(player.id, { choiceIndex, at })
   emitAnswerCount(room)
   return true
@@ -209,8 +263,9 @@ function sendQuestion(room) {
   room.answers = new Map()
   room.correctIndex = null
   room.lastTop5 = []
+  room.lastRows = null
   room.qDurationMs = (q.durationSec ?? 20) * 1000
-  room.qStartsAt = Date.now() + QUESTION_LEAD_MS
+  room.qStartsAt = Date.now()
   room.qEndsAt = room.qStartsAt + room.qDurationMs
 
   room.question = {
@@ -223,14 +278,13 @@ function sendQuestion(room) {
     durationMs: room.qDurationMs,
   }
 
-  io.to(room.code).emit('game:question', room.question)
+  emitQuestionToEveryone(room)
   emitAnswerCount(room)
   log(`room ${room.code} question ${room.qIndex + 1}/${QUIZ.questions.length}`)
 
   for (const player of room.players.values()) {
-    if (!player.bot) continue
-    const when =
-      room.qStartsAt + (0.18 + Math.random() * 0.62) * room.qDurationMs
+    if (!player.bot || !eligible(room, player)) continue
+    const when = room.qStartsAt + (0.18 + Math.random() * 0.62) * room.qDurationMs
     const timer = setTimeout(() => {
       if (room.phase !== 'question' || room.question?.index !== room.qIndex) return
       const correct = Math.random() < 0.76
@@ -252,13 +306,12 @@ function endQuestion(room) {
   if (room.phase !== 'question' || !room.question) return
   room.phase = 'reveal'
   const q = QUIZ.questions[room.qIndex]
-  const rows = ranked(room)
 
   for (const player of room.players.values()) {
     const answer = room.answers.get(player.id)
     let points = 0
-    if (answer && answer.choiceIndex === q.correctIndex) {
-      const timeLeft = Math.max(0, Math.min(room.qDurationMs, room.qEndsAt - answer.at))
+    if (eligible(room, player) && answer && answer.choiceIndex === q.correctIndex) {
+      const timeLeft = room.qEndsAt - answer.at
       points = Math.round((1000 * timeLeft) / room.qDurationMs)
     }
     player.score += points
@@ -266,21 +319,22 @@ function endQuestion(room) {
     player.lastAnswer = answer?.choiceIndex ?? null
   }
 
-  const afterRows = ranked(room)
+  const rows = ranked(room)
   room.correctIndex = q.correctIndex
-  room.lastTop5 = topRows(afterRows)
-  room.lastRows = afterRows
+  room.lastTop5 = topRows(rows)
+  room.lastRows = rows
 
   for (const player of room.players.values()) {
-    if (player.bot || !player.socketId) continue
-    io.to(player.socketId).emit('question:result', {
+    player.lastResult = {
       index: room.question.index,
       correctIndex: q.correctIndex,
       points: player.lastPoints,
       totalScore: player.score,
-      rank: rankOf(afterRows, player),
+      rank: rankOf(rows, player),
       top5: room.lastTop5,
-    })
+    }
+    if (player.bot || !player.socketId) continue
+    io.to(player.socketId).emit('question:result', player.lastResult)
   }
 
   log(`room ${room.code} reveal ${room.qIndex + 1}`, room.lastTop5.slice(0, 3))
@@ -301,25 +355,20 @@ function endGame(room) {
   clearTimers(room)
   room.phase = 'ended'
   const rows = ranked(room)
+  const top5 = topRows(rows)
 
   for (const player of room.players.values()) {
     if (player.bot || !player.socketId) continue
     io.to(player.socketId).emit('game:ended', {
       yourRank: rankOf(rows, player),
       yourScore: player.score,
-      top5: topRows(rows),
+      top5,
     })
   }
 
-  emitToHosts(room, 'game:ended', {
-    leaderboard: rows.map(({ player, rank }) => ({
-      rank,
-      nickname: player.nickname,
-      totalScore: player.score,
-    })),
-  })
+  emitToHosts(room, 'game:ended', { leaderboard: fullRows(room) })
 
-  log(`room ${room.code} ended`, `${playerCount(room)} players`)
+  log(`room ${room.code} ended`, `${room.players.size} players`)
 
   setTimeout(() => {
     if (rooms.get(room.code) === room) rooms.delete(room.code)
@@ -327,18 +376,15 @@ function endGame(room) {
 }
 
 function sendStateTo(socket, room, player) {
-  if (room.phase === 'question' || room.phase === 'reveal') {
-    socket.emit('game:question', room.question)
+  if (room.phase === 'question') {
+    socket.emit('game:question', questionPayload(room, player))
   }
-  if (room.phase === 'reveal' && room.lastRows) {
-    socket.emit('question:result', {
-      index: room.question.index,
-      correctIndex: room.correctIndex,
-      points: player.lastPoints,
-      totalScore: player.score,
-      rank: rankOf(room.lastRows, player),
-      top5: room.lastTop5,
-    })
+  if (
+    room.phase === 'reveal' &&
+    player.lastResult &&
+    player.lastResult.index === room.qIndex
+  ) {
+    socket.emit('question:result', player.lastResult)
   }
   if (room.phase === 'ended') {
     const rows = ranked(room)
@@ -360,11 +406,22 @@ io.on('connection', (socket) => {
   log('connect', socket.id)
 
   socket.on('host:create_room', (payload) => {
-    const quizId = String(payload?.quizId ?? '').trim() || QUIZ.id
+    const token = requireHost(socket)
+    if (!token) return
+
+    const quizId = String(payload?.quizId ?? '').trim()
+    if (quizId !== QUIZ.id) {
+      return fail(socket, 'QUIZ_NOT_FOUND', 'Quiz not found for this host.')
+    }
+    if (QUIZ.questions.length === 0) {
+      return fail(socket, 'QUIZ_EMPTY', 'That quiz has no questions.')
+    }
+
     const code = newCode()
     const room = {
       code,
       quizId,
+      hostToken: token,
       hostSockets: new Set([socket.id]),
       players: new Map(),
       phase: 'lobby',
@@ -394,22 +451,29 @@ io.on('connection', (socket) => {
 
     room.botJoinTimer = setInterval(() => {
       if (room.phase !== 'lobby') return
-      if (playerCount(room) >= BOT_TARGET) return
-      addBot(room, room.botNames.pop() || `Player${playerCount(room) + 1}`)
+      if (room.players.size >= BOT_TARGET) return
+      addBot(room, room.botNames.pop() || `Player${room.players.size + 1}`)
       showLobby(room)
     }, 2800)
   })
 
   socket.on('host:start', (payload) => {
+    const token = requireHost(socket)
+    if (!token) return
+
     const code = String(payload?.code ?? '').trim()
     const room = rooms.get(code)
-    if (!room) return fail(socket, 'ROOM_NOT_FOUND', 'That room does not exist.')
+    if (!room) return fail(socket, 'ROOM_NOT_FOUND', 'Room not found. Check the code.')
     if (!room.hostSockets.has(socket.id)) {
-      return fail(socket, 'NOT_HOST', 'Only the host can start this room.')
+      return fail(socket, 'NOT_HOST', 'Authenticated host does not own that room.')
+    }
+    if (room.phase === 'ended') {
+      return fail(socket, 'GAME_ENDED', 'That game has already ended.')
     }
     if (room.phase !== 'lobby') {
-      return fail(socket, 'ALREADY_STARTED', 'This game is already running.')
+      return fail(socket, 'ALREADY_STARTED', 'This game has already started.')
     }
+
     room.startedAt = Date.now()
     room.qIndex = 0
     sendQuestion(room)
@@ -418,13 +482,25 @@ io.on('connection', (socket) => {
   socket.on('player:join', (payload) => {
     const code = String(payload?.code ?? '').trim()
     const room = rooms.get(code)
-    if (!room) return fail(socket, 'ROOM_NOT_FOUND', 'No room with that code. Check it and try again.')
+    if (!room) return fail(socket, 'ROOM_NOT_FOUND', 'Room not found. Check the code.')
     if (room.phase === 'ended') {
-      return fail(socket, 'GAME_ENDED', 'That game has already finished.')
+      return fail(socket, 'GAME_ENDED', 'That game has already ended.')
+    }
+    if (socket.data.playerId) {
+      return fail(socket, 'ALREADY_JOINED', 'This socket has already joined a room.')
+    }
+    if (room.players.size >= MAX_PLAYERS) {
+      return fail(socket, 'ROOM_FULL', 'That room is full.')
     }
 
-    const player = makePlayer(uniqueNickname(room, payload?.nickname), {
+    const rawNickname = typeof payload?.nickname === 'string' ? payload.nickname.trim() : ''
+    if (!rawNickname || rawNickname.length > 24) {
+      return fail(socket, 'INVALID_NICKNAME', 'Nickname must be 1 to 24 characters.')
+    }
+
+    const player = makePlayer(uniqueNickname(room, rawNickname), {
       socketId: socket.id,
+      eligibleFromIndex: room.phase === 'lobby' ? 0 : room.qIndex + 1,
     })
     room.players.set(player.id, player)
     socket.data.roomCode = code
@@ -445,9 +521,12 @@ io.on('connection', (socket) => {
     const code = String(payload?.code ?? '').trim()
     const token = String(payload?.playerToken ?? '')
     const room = rooms.get(code)
-    if (!room) return fail(socket, 'ROOM_NOT_FOUND', 'That room no longer exists.')
-    const player = [...room.players.values()].find((p) => p.token === token)
-    if (!player) return fail(socket, 'PLAYER_NOT_FOUND', 'We could not find you in this room.')
+    if (!room) return fail(socket, 'ROOM_NOT_FOUND', 'Room not found. Check the code.')
+
+    const player = [...room.players.values()].find((p) => p.token === token && token)
+    if (!player) {
+      return fail(socket, 'INVALID_PLAYER_TOKEN', 'Rejoin token is unknown or expired.')
+    }
 
     player.socketId = socket.id
     socket.data.roomCode = code
@@ -466,25 +545,34 @@ io.on('connection', (socket) => {
   socket.on('player:answer', (payload) => {
     const code = String(payload?.code ?? '').trim()
     const room = rooms.get(code)
-    if (!room) return fail(socket, 'ROOM_NOT_FOUND', 'That room no longer exists.')
-    if (room.phase !== 'question' || !room.question) {
-      return fail(socket, 'NOT_ACCEPTING', 'Answers are closed right now.')
-    }
-    if (payload?.questionIndex !== room.question.index) {
-      return fail(socket, 'WRONG_QUESTION', 'That question is no longer live.')
-    }
+    if (!room) return fail(socket, 'ROOM_NOT_FOUND', 'Room not found. Check the code.')
+
     const player = room.players.get(socket.data.playerId)
-    if (!player) return fail(socket, 'NOT_IN_ROOM', 'Join the room before answering.')
-    if (Date.now() < room.qStartsAt) {
-      return fail(socket, 'NOT_STARTED', 'The question has not started yet.')
+    if (!player || socket.data.roomCode !== code) {
+      return fail(socket, 'NOT_IN_ROOM', 'Join the room before answering.')
     }
-    if (Date.now() > room.qEndsAt) {
-      return fail(socket, 'TIME_UP', 'Time is up for this question.')
+
+    const questionIndex = payload?.questionIndex
+    const choiceIndex = payload?.choiceIndex
+    if (!Number.isInteger(questionIndex) || !Number.isInteger(choiceIndex)) {
+      return fail(socket, 'INVALID_ANSWER', 'questionIndex and choiceIndex must be integers.')
     }
-    const choiceIndex = Number(payload?.choiceIndex)
-    if (!Number.isInteger(choiceIndex) || choiceIndex < 0 || choiceIndex >= room.question.options.length) {
-      return fail(socket, 'BAD_CHOICE', 'That answer option does not exist.')
+
+    if (room.phase !== 'question' || !room.question) {
+      // Answers at or after the deadline are ignored.
+      return
     }
+    if (questionIndex !== room.question.index) {
+      return fail(socket, 'INVALID_ANSWER', 'That question is not the live question.')
+    }
+    if (choiceIndex < 0 || choiceIndex >= room.question.options.length) {
+      return fail(socket, 'INVALID_CHOICE', 'choiceIndex is outside the current options.')
+    }
+    if (!eligible(room, player)) {
+      return fail(socket, 'NOT_ELIGIBLE', 'You joined during this question; scoring starts next.')
+    }
+    if (Date.now() >= room.qEndsAt) return
+
     if (recordAnswer(room, player, choiceIndex, Date.now())) {
       log(`room ${code} answer`, player.nickname, choiceIndex)
     }
@@ -494,10 +582,15 @@ io.on('connection', (socket) => {
     for (const room of rooms.values()) {
       if (room.hostSockets.delete(socket.id)) log('host left', room.code)
       for (const player of room.players.values()) {
-        if (player.socketId === socket.id) {
+        if (player.socketId !== socket.id) continue
+
+        if (room.phase === 'lobby') {
+          room.players.delete(player.id)
+          showLobby(room)
+        } else {
           player.socketId = null
-          log('player left', room.code, player.nickname)
         }
+        log('player left', room.code, player.nickname)
       }
     }
   })

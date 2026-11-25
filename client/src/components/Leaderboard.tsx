@@ -29,7 +29,7 @@ export function Leaderboard({
         const isMe = highlight != null && row.nickname === highlight
         return (
           <li
-            key={`${row.rank}-${row.nickname}`}
+            key={row.playerId}
             className={`flex items-center gap-3 rounded-2xl border px-3 py-2.5 sm:px-4 ${
               isMe
                 ? 'border-acid-400/45 bg-acid-400/10'
@@ -52,7 +52,7 @@ export function Leaderboard({
               )}
             </span>
             <span className="shrink-0 font-semibold tabular-nums text-mist-300">
-              {row.score.toLocaleString()}
+              {row.totalScore.toLocaleString()}
               <span className="ml-1 text-[0.65rem] font-medium tracking-wider text-mist-500 uppercase">
                 pts
               </span>

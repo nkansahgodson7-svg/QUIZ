@@ -10,11 +10,12 @@ export const SERVER_URL =
 
 export const IS_DEFAULT_SERVER = SERVER_URL === 'http://localhost:4000'
 
-export function createSocket(): GameSocket {
+export function createSocket(options: { token?: string } = {}): GameSocket {
   return io(SERVER_URL, {
     autoConnect: false,
     transports: ['websocket', 'polling'],
     reconnectionDelay: 600,
     reconnectionDelayMax: 3000,
+    auth: options.token ? { token: options.token } : undefined,
   })
 }

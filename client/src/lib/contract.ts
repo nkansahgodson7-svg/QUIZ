@@ -1,6 +1,6 @@
 import type { Socket } from 'socket.io-client'
 
-/** Wire types for the socket contract in SPEC.md section 8. */
+/** Wire types for the final contract in CONTRACT.md. */
 export type QuestionType = 'multiple_choice' | 'true_false'
 
 export interface GameQuestion {
@@ -11,6 +11,8 @@ export interface GameQuestion {
   options: string[]
   startsAt: number
   durationMs: number
+  /** Latest server-received answer for this question; always null for hosts. */
+  myChoiceIndex: number | null
 }
 
 export interface JoinedPayload {
@@ -23,12 +25,11 @@ export interface LobbyUpdate {
   playerCount: number
 }
 
-/** The contract does not pin the shape inside top5[]; accept the common variants. */
 export interface LeaderboardEntry {
-  rank?: number
+  playerId: string
   nickname: string
-  totalScore?: number
-  score?: number
+  totalScore: number
+  rank: number
 }
 
 export interface PlayerResult {
@@ -46,12 +47,17 @@ export interface AnswerCount {
   total: number
 }
 
-export interface GameEndedPayload {
-  yourRank?: number
-  yourScore?: number
-  top5?: LeaderboardEntry[]
-  leaderboard?: LeaderboardEntry[]
+export interface PlayerGameEnded {
+  yourRank: number
+  yourScore: number
+  top5: LeaderboardEntry[]
 }
+
+export interface HostGameEnded {
+  leaderboard: LeaderboardEntry[]
+}
+
+export type GameEndedPayload = PlayerGameEnded | HostGameEnded
 
 export interface GameError {
   code: string
@@ -79,17 +85,13 @@ export interface ClientToServerEvents {
 
 export type GameSocket = Socket<ServerToClientEvents, ClientToServerEvents>
 
-export interface LeaderRow {
-  rank: number
-  nickname: string
-  score: number
+/** The leaderboard UI uses the same exact entry shape as the wire. */
+export type LeaderRow = LeaderboardEntry
+
+export function isPlayerGameEnded(payload: GameEndedPayload): payload is PlayerGameEnded {
+  return 'yourRank' in payload
 }
 
-export function normalizeLeaderboard(entries: LeaderboardEntry[] | undefined): LeaderRow[] {
-  if (!Array.isArray(entries)) return []
-  return entries.map((entry, i) => ({
-    rank: entry.rank ?? i + 1,
-    nickname: entry.nickname || 'Player',
-    score: entry.totalScore ?? entry.score ?? 0,
-  }))
+export function isHostGameEnded(payload: GameEndedPayload): payload is HostGameEnded {
+  return 'leaderboard' in payload
 }
