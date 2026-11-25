@@ -15,10 +15,20 @@ router.get(
       { $match: { hostId } },
       { $sort: { endedAt: -1 } },
       {
+        $lookup: {
+          from: 'quizzes',
+          localField: 'quizId',
+          foreignField: '_id',
+          as: 'quizDoc',
+          pipeline: [{ $project: { title: 1 } }],
+        },
+      },
+      {
         $project: {
           _id: 0,
           id: { $toString: '$_id' },
           quizId: { $toString: '$quizId' },
+          quizTitle: { $ifNull: [{ $arrayElemAt: ['$quizDoc.title', 0] }, null] },
           code: 1,
           startedAt: 1,
           endedAt: 1,

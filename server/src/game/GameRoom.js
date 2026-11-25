@@ -223,12 +223,10 @@ export class GameRoom {
 
   _emitAnswerCount() {
     if (!this.currentQuestion) return;
-    const eligible = Array.from(this.players.values())
-      .filter((player) => player.eligibleFromIndex <= this.currentIndex);
     this.emitToHost(SERVER_EVENTS.GAME_ANSWER_COUNT, {
       index: this.currentIndex,
       answered: this.currentQuestion.answers.size,
-      total: eligible.length,
+      total: this.currentQuestion.eligibleCount,
     });
   }
 
@@ -243,11 +241,19 @@ export class GameRoom {
     const durationMs = Math.max(1, question.durationSec * 1000);
 
     this.state = 'question';
+    // Eligibility is fixed for the duration of a question: players who join
+    // later are only eligible from the next question, so count once here.
+    let eligibleCount = 0;
+    for (const player of this.players.values()) {
+      if (player.eligibleFromIndex <= this.currentIndex) eligibleCount += 1;
+    }
+
     this.currentQuestion = {
       index: this.currentIndex,
       startsAt,
       endsAt: startsAt + durationMs,
       durationMs,
+      eligibleCount,
       answers: new Map(),
     };
 

@@ -427,6 +427,11 @@ test('game flow: join, start, answer changes, scoring, auto-advance, saved sessi
   assert.equal(saved.code, code);
   assert.equal(saved.players.length, 2);
 
+  const listed = await request('/api/sessions', { token: host.token });
+  assert.equal(listed.status, 200);
+  const listedSession = listed.data.sessions.find((session) => session.code === code);
+  assert.equal(listedSession.quizTitle, 'Test quiz');
+
   const savedP1 = saved.players.find((player) => player.nickname === 'Kwame');
   const savedP2 = saved.players.find((player) => player.nickname === 'Kwame2');
   assert.equal(savedP1.answers.length, 2);

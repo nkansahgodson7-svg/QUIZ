@@ -48,6 +48,17 @@ test('nicknames are cleaned, capped and de-duplicated case-insensitively', () =>
   assert.equal(uniqueNickname(players, 'Ama'), 'Ama');
 });
 
+test('de-duplicated 24-character nicknames stay within the cap', () => {
+  const long = 'x'.repeat(24);
+  const first = uniqueNickname([{ nickname: long }], long);
+  assert.equal(first, `${'x'.repeat(23)}2`);
+  assert.equal(first.length, 24);
+
+  const second = uniqueNickname([{ nickname: long }, { nickname: first }], long);
+  assert.equal(second, `${'x'.repeat(23)}3`);
+  assert.equal(second.length, 24);
+});
+
 test('room codes are exactly six digits', () => {
   assert.equal(normalizeRoomCode('012345'), '012345');
   assert.equal(normalizeRoomCode(123456), '123456');

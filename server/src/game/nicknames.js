@@ -12,8 +12,11 @@ export function uniqueNickname(players, desired) {
   if (!taken.has(desired.toLowerCase())) return desired;
 
   let suffix = 2;
-  while (taken.has(`${desired}${suffix}`.toLowerCase())) {
+  for (;;) {
+    const suffixText = String(suffix);
+    const base = desired.slice(0, MAX_NICKNAME_LENGTH - suffixText.length);
+    const candidate = `${base}${suffixText}`;
+    if (!taken.has(candidate.toLowerCase())) return candidate;
     suffix += 1;
   }
-  return `${desired}${suffix}`;
 }
