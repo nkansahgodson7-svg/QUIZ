@@ -15,3 +15,11 @@ export function saveHostToken(token: string) {
     /* storage can be unavailable in private mode; the token still works this session */
   }
 }
+
+export function clearHostToken() {
+  try {
+    localStorage.removeItem(KEY)
+  } catch {
+    /* ignore */
+  }
+}
