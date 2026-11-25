@@ -366,7 +366,7 @@ async function run() {
       log('Waiting for the host to start the room...');
     }
 
-    const computedTimeoutSec = code && host
+    const computedTimeoutSec = host && !options['quiz-id']
       ? Math.max(60, questionCount * (durationSec + 7) + 30)
       : 300;
     const timeoutSec = options.timeout
