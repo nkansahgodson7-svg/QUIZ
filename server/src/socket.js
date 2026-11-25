@@ -146,7 +146,7 @@ export function attachSocketHandlers(io, rooms) {
 
         if (room.state === 'lobby') room.emitLobbyUpdate();
 
-        const currentQuestion = room.currentQuestionPayload();
+        const currentQuestion = room.currentQuestionPayload(player.id);
         if (currentQuestion) socket.emit(SERVER_EVENTS.GAME_QUESTION, currentQuestion);
       }),
     );
@@ -180,7 +180,7 @@ export function attachSocketHandlers(io, rooms) {
 
         if (room.state === 'lobby') room.emitLobbyUpdate();
 
-        const currentQuestion = room.currentQuestionPayload();
+        const currentQuestion = room.currentQuestionPayload(player.id);
         if (currentQuestion) {
           socket.emit(SERVER_EVENTS.GAME_QUESTION, currentQuestion);
         } else if (

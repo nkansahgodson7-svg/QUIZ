@@ -2,6 +2,8 @@
 
 Real-time classroom quiz server built with Node.js, Express, Socket.IO, and MongoDB (Mongoose). It owns host auth, saved quizzes, live rooms, timers, scoring, reconnection, and saved results.
 
+The authoritative socket event contract is [CONTRACT.md](CONTRACT.md).
+
 The server listens on **port 4000** by default.
 
 ## Requirements
@@ -189,7 +191,7 @@ The token is read from `handshake.auth.token` (a `Bearer ` prefix is tolerated) 
 | `room:created` | host | `{ code }` |
 | `player:joined` | player | `{ playerId, nickname, playerToken }` |
 | `lobby:update` | host | `{ playerCount }` |
-| `game:question` | everyone in room | `{ index, total, type, text, options[], startsAt, durationMs }` |
+| `game:question` | everyone in room | `{ index, total, type, text, options[], startsAt, durationMs, myChoiceIndex }` |
 | `game:answer_count` | host | `{ index, answered, total }` |
 | `question:result` | each player | `{ index, correctIndex, points, totalScore, rank, top5[] }` |
 | `game:ended` | player | `{ yourRank, yourScore, top5[] }` |
@@ -197,6 +199,8 @@ The token is read from `handshake.auth.token` (a `Bearer ` prefix is tolerated) 
 | `error` | requesting socket | `{ code, message }` |
 
 `startsAt` is a Unix epoch timestamp in milliseconds. `index` is zero-based.
+
+`myChoiceIndex` is the recipient's latest accepted answer for the current question, or `null` if they have not answered. It is always `null` for the host. On rejoin during a question, this field restores whether the player already answered and which option they chose.
 
 `top5` and `leaderboard` entries have this shape:
 
@@ -219,7 +223,7 @@ Players only ever receive their own result plus the top 5. The host receives the
 - The reveal lasts `REVEAL_MS` (5 seconds by default), then the next question is sent automatically.
 - After the last reveal, players get `game:ended`; the host gets the full leaderboard; the session is written to MongoDB.
 - Late joiners are added to the room immediately, receive the current question for display, but cannot score on it. They become eligible on the next question.
-- Active-game player drops retain their record and score. Rejoining with `playerToken` restores the same player and sends the current question state (same `startsAt` and `durationMs`).
+- Active-game player drops retain their record and score. Rejoining with `playerToken` restores the same player and sends the current question state (same `startsAt` and `durationMs`), including their latest answer in `myChoiceIndex`.
 - Lobby drops are removed immediately so the host's player count stays accurate.
 - Host drops do not stop the game; timers and auto-advance are independent. Results are still saved.
 - `game:answer_count.total` counts players eligible to answer the current question (late joiners are excluded until the next question).
@@ -256,15 +260,15 @@ Players only ever receive their own result plus the top 5. The host receives the
 
 Every question has an entry for every player; missing answers have `choiceIndex: null` and `points: 0`.
 
-## Contract notes / ambiguities
+## Contract decisions (locked)
 
-These do not change any event name or required payload field, but the spec left them open:
+The final decisions are documented in [CONTRACT.md](CONTRACT.md):
 
-1. **Rejoin "whether they already answered"** cannot be expressed by the current contract. `game:question` has no answered field, and `question:result` is a reveal event. On rejoin during a question, the server re-sends `game:question` with the original `startsAt`; the client can compute remaining time but not whether the player already tapped. If that state is required, the contract needs a field.
-2. **Host `game:ended` payload** is not specified beyond "the full leaderboard"; this server sends `{ leaderboard }` only.
-3. **`top5[]` entry shape** and **question `type` strings** are not specified; this server uses the shapes documented above (`multiple_choice` / `true_false`).
-4. There is no host rejoin event. If a host disconnects mid-game, the game finishes and the result is saved, but the host cannot reattach to live host-only events.
-5. Host authentication is via the Socket.IO handshake, since `host:create_room` only carries `{ quizId }`.
+1. `game:question` includes `myChoiceIndex` so reconnecting players can restore whether they already answered.
+2. Player `game:ended` is `{ yourRank, yourScore, top5 }`; host `game:ended` is `{ leaderboard }`.
+3. `top5` and `leaderboard` entries are `{ playerId, nickname, totalScore, rank }`; question types are `multiple_choice` and `true_false`.
+4. Host authentication is via the Socket.IO handshake, since the event payloads do not carry tokens.
+5. There is no host rejoin event. Host disconnects do not stop the game, auto-advance, or result saving.
 
 ## Tests
 
@@ -272,4 +276,4 @@ These do not change any event name or required payload field, but the spec left 
 npm test
 ```
 
-The integration suite covers REST auth/quiz CRUD, room creation, join/nickname suffixing, start, answer changes, scoring, answer counts, auto-advance, per-player results, host/full leaderboards, rejoin with score retention, late joiners, host disconnects, saved sessions, and socket auth/ownership errors.
+The integration suite covers REST auth/quiz CRUD, room creation, join/nickname suffixing, start, answer changes, scoring, answer counts, auto-advance, per-player results, host/full leaderboards, rejoin with score retention and `myChoiceIndex`, late joiners, host disconnects, saved sessions, and socket auth/ownership errors.

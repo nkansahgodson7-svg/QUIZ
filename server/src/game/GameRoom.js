@@ -205,9 +205,10 @@ export class GameRoom {
     return { accepted: true };
   }
 
-  currentQuestionPayload() {
+  currentQuestionPayload(playerId = null) {
     if (this.state !== 'question' || !this.currentQuestion) return null;
     const question = this.quiz.questions[this.currentIndex];
+    const answer = playerId ? this.currentQuestion.answers.get(playerId) : null;
     return {
       index: this.currentIndex,
       total: this.quiz.questions.length,
@@ -216,6 +217,7 @@ export class GameRoom {
       options: [...question.options],
       startsAt: this.currentQuestion.startsAt,
       durationMs: this.currentQuestion.durationMs,
+      myChoiceIndex: answer ? answer.choiceIndex : null,
     };
   }
 
@@ -249,7 +251,7 @@ export class GameRoom {
       answers: new Map(),
     };
 
-    this.io.to(this.code).emit(SERVER_EVENTS.GAME_QUESTION, {
+    const basePayload = {
       index: this.currentIndex,
       total: this.quiz.questions.length,
       type: question.type,
@@ -257,7 +259,16 @@ export class GameRoom {
       options: [...question.options],
       startsAt,
       durationMs,
-    });
+    };
+
+    this.emitToHost(SERVER_EVENTS.GAME_QUESTION, { ...basePayload, myChoiceIndex: null });
+    for (const player of this.players.values()) {
+      if (!player.socketId) continue;
+      this.io.sockets.sockets.get(player.socketId)?.emit(SERVER_EVENTS.GAME_QUESTION, {
+        ...basePayload,
+        myChoiceIndex: this.currentQuestion.answers.get(player.id)?.choiceIndex ?? null,
+      });
+    }
 
     this._emitAnswerCount();
 

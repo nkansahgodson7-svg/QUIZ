@@ -363,6 +363,9 @@ test('game flow: join, start, answer changes, scoring, auto-advance, saved sessi
   assert.equal(p1Q1.startsAt, p2Q1.startsAt);
   assert.equal(p1Q1.durationMs, 2000);
   assert.equal(p1Q1.total, 2);
+  assert.equal(hostQ1.myChoiceIndex, null);
+  assert.equal(p1Q1.myChoiceIndex, null);
+  assert.equal(p2Q1.myChoiceIndex, null);
 
   playerTwo.socket.emit('player:answer', { code, questionIndex: 0, choiceIndex: 3 });
   playerOne.socket.emit('player:answer', { code, questionIndex: 0, choiceIndex: 0 });
@@ -493,12 +496,14 @@ test('rejoin keeps score; late joiner starts scoring on the next question', { ti
   });
   assert.equal(reconnectQuestion.index, 0);
   assert.equal(reconnectQuestion.total, 2);
+  assert.equal(reconnectQuestion.myChoiceIndex, 1);
 
   const leo = await joinPlayer(code, 'Leo');
   const leoQuestion = await leo.inbox.take('game:question', {
     predicate: (payload) => payload.index === 0,
   });
   assert.equal(leoQuestion.index, 0);
+  assert.equal(leoQuestion.myChoiceIndex, null);
 
   leo.socket.emit('player:answer', { code, questionIndex: 0, choiceIndex: 1 });
   const notEligible = await leo.inbox.take('error', { timeoutMs: 3000 });
