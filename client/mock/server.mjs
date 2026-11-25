@@ -1,15 +1,12 @@
 /**
- * Mock game server for the client. Implements only the events in CONTRACT.md.
+ * Mock game server for the client. Implements the Socket.IO contract plus the
+ * REST routes the host console needs.
  *
  *   node mock/server.mjs        (or npm run mock)
  *
- * Hosts authenticate on the Socket.IO handshake. There is no REST auth in the
- * mock, so any non-empty token is treated as a valid host token:
- *
- *   io('http://localhost:4000', { auth: { token: 'mock-host-token' } })
- *
- * Rooms live in memory, a 5-question demo quiz runs on timers, and fake players
- * answer so the lobby and leaderboard are populated during development.
+ * Accounts, quizzes, and sessions live in memory and reset when the mock stops.
+ * Sign up from /host with any email and a 6+ character password. New accounts
+ * get a demo quiz, and finished games are saved for Past Results.
  */
 import { createServer } from 'node:http'
 import { randomUUID } from 'node:crypto'
@@ -20,8 +17,7 @@ const REVEAL_MS = 5000
 const MAX_PLAYERS = 300
 const BOT_TARGET = 14
 
-const QUIZ = {
-  id: 'demo-quiz',
+const DEMO_QUIZ = {
   title: 'The Big Brain Warm-Up',
   questions: [
     {
@@ -79,17 +75,44 @@ const BOT_NAMES = [
   'Tobi',
 ]
 
+const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
+
 /** @type {Map<string, any>} */
 const rooms = new Map()
+/** @type {Map<string, any>} */
+const hosts = new Map()
+/** @type {Map<string, string>} */
+const hostTokens = new Map()
+/** @type {Map<string, any>} */
+const quizzes = new Map()
+/** @type {Map<string, any>} */
+const sessions = new Map()
+let hostSequence = 0
+let quizSequence = 0
+let sessionSequence = 0
+
+class HttpError extends Error {
+  constructor(status, code, message) {
+    super(message)
+    this.name = 'HttpError'
+    this.status = status
+    this.code = code
+  }
+}
 
 const httpServer = createServer((req, res) => {
-  if (req.url === '/health') {
-    res.writeHead(200, { 'Content-Type': 'application/json' })
-    res.end(JSON.stringify({ ok: true, rooms: rooms.size, quiz: QUIZ.title }))
-    return
-  }
-  res.writeHead(404, { 'Content-Type': 'application/json' })
-  res.end(JSON.stringify({ ok: false }))
+  handleHttp(req, res).catch((error) => {
+    if (res.headersSent) {
+      res.end()
+      return
+    }
+    if (error instanceof HttpError) {
+      sendJson(res, error.status, { code: error.code, message: error.message })
+      return
+    }
+    console.error('[mock] http error', error)
+    sendJson(res, 500, { code: 'INTERNAL_ERROR', message: 'Unexpected mock server error.' })
+  })
 })
 
 const io = new Server(httpServer, {
@@ -114,11 +137,12 @@ function readHostToken(socket) {
 
 function requireHost(socket) {
   const token = readHostToken(socket)
-  if (!token) {
+  const hostId = token ? hostTokens.get(token) : null
+  if (!hostId) {
     fail(socket, 'AUTH_REQUIRED', 'Host authentication is required.')
     return null
   }
-  return token
+  return hostId
 }
 
 function newCode() {
@@ -127,6 +151,349 @@ function newCode() {
     code = String(Math.floor(100000 + Math.random() * 900000))
   } while (rooms.has(code))
   return code
+}
+
+function sendJson(res, status, payload) {
+  res.writeHead(status, {
+    'Content-Type': 'application/json',
+    'Access-Control-Allow-Origin': '*',
+    'Access-Control-Allow-Methods': 'GET,POST,PUT,DELETE,OPTIONS',
+    'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+    'Cache-Control': 'no-store',
+  })
+  res.end(JSON.stringify(payload))
+}
+
+function sendNoContent(res) {
+  res.writeHead(204, {
+    'Access-Control-Allow-Origin': '*',
+    'Access-Control-Allow-Methods': 'GET,POST,PUT,DELETE,OPTIONS',
+    'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+    'Access-Control-Max-Age': '86400',
+  })
+  res.end()
+}
+
+function readJson(req) {
+  return new Promise((resolve, reject) => {
+    let raw = ''
+    req.setEncoding('utf8')
+    req.on('data', (chunk) => {
+      raw += chunk
+      if (raw.length > 1_000_000) {
+        reject(new HttpError(413, 'PAYLOAD_TOO_LARGE', 'Request body is too large.'))
+        req.destroy()
+      }
+    })
+    req.on('end', () => {
+      if (!raw.trim()) {
+        resolve({})
+        return
+      }
+      try {
+        resolve(JSON.parse(raw))
+      } catch {
+        reject(new HttpError(400, 'INVALID_JSON', 'Request body must be valid JSON.'))
+      }
+    })
+    req.on('error', reject)
+  })
+}
+
+function publicHost(host) {
+  return { id: host.id, email: host.email, createdAt: host.createdAt }
+}
+
+function findHostById(id) {
+  for (const host of hosts.values()) {
+    if (host.id === id) return host
+  }
+  return null
+}
+
+function authHost(req) {
+  const header = req.headers.authorization ?? ''
+  const token = header.replace(/^Bearer\s+/i, '').trim()
+  const hostId = token ? hostTokens.get(token) : null
+  return hostId ? findHostById(hostId) : null
+}
+
+function requireHttpHost(req) {
+  const host = authHost(req)
+  if (!host) {
+    throw new HttpError(401, 'AUTH_REQUIRED', 'Host authentication is required.')
+  }
+  return host
+}
+
+function issueToken(hostId) {
+  const token = `mock_${randomUUID()}`
+  hostTokens.set(token, hostId)
+  return token
+}
+
+function normalizeQuizInput(body) {
+  const title = typeof body?.title === 'string' ? body.title.trim() : ''
+  if (!title) throw new HttpError(400, 'VALIDATION_ERROR', 'title cannot be empty.')
+  if (title.length > 120) {
+    throw new HttpError(400, 'VALIDATION_ERROR', 'title must be at most 120 characters.')
+  }
+  if (!Array.isArray(body?.questions) || body.questions.length < 1) {
+    throw new HttpError(400, 'VALIDATION_ERROR', 'A quiz needs at least one question.')
+  }
+  if (body.questions.length > 100) {
+    throw new HttpError(400, 'VALIDATION_ERROR', 'A quiz can have at most 100 questions.')
+  }
+
+  const questions = body.questions.map((question, index) => {
+    const label = `Question ${index + 1}`
+    const type = question?.type
+    if (type !== 'multiple_choice' && type !== 'true_false') {
+      throw new HttpError(
+        400,
+        'VALIDATION_ERROR',
+        `${label} type must be "multiple_choice" or "true_false".`,
+      )
+    }
+
+    const text = typeof question.text === 'string' ? question.text.trim() : ''
+    if (!text) throw new HttpError(400, 'VALIDATION_ERROR', `${label} text cannot be empty.`)
+    if (text.length > 1000) {
+      throw new HttpError(400, 'VALIDATION_ERROR', `${label} text is too long.`)
+    }
+
+    const durationSec =
+      question.durationSec === undefined || question.durationSec === null
+        ? 20
+        : Number(question.durationSec)
+    if (!Number.isInteger(durationSec) || durationSec < 1 || durationSec > 300) {
+      throw new HttpError(
+        400,
+        'VALIDATION_ERROR',
+        `${label} durationSec must be an integer from 1 to 300.`,
+      )
+    }
+
+    if (type === 'true_false') {
+      const correctIndex = Number(question.correctIndex)
+      if (correctIndex !== 0 && correctIndex !== 1) {
+        throw new HttpError(400, 'VALIDATION_ERROR', `${label} correctIndex must be 0 or 1.`)
+      }
+      return {
+        type,
+        text,
+        options: ['True', 'False'],
+        correctIndex,
+        durationSec,
+      }
+    }
+
+    if (!Array.isArray(question.options) || question.options.length < 2 || question.options.length > 4) {
+      throw new HttpError(400, 'VALIDATION_ERROR', `${label} must have 2 to 4 options.`)
+    }
+    const options = question.options.map((option, optionIndex) => {
+      const value = typeof option === 'string' ? option.trim() : ''
+      if (!value) {
+        throw new HttpError(
+          400,
+          'VALIDATION_ERROR',
+          `${label} option ${optionIndex + 1} cannot be empty.`,
+        )
+      }
+      if (value.length > 200) {
+        throw new HttpError(
+          400,
+          'VALIDATION_ERROR',
+          `${label} option ${optionIndex + 1} is too long.`,
+        )
+      }
+      return value
+    })
+    const correctIndex = Number(question.correctIndex)
+    if (!Number.isInteger(correctIndex) || correctIndex < 0 || correctIndex >= options.length) {
+      throw new HttpError(
+        400,
+        'VALIDATION_ERROR',
+        `${label} correctIndex must point at one of the options.`,
+      )
+    }
+    return { type, text, options, correctIndex, durationSec }
+  })
+
+  return { title, questions }
+}
+
+function seedDemoQuiz(hostId) {
+  const now = new Date().toISOString()
+  const quiz = {
+    id: `quiz_${++quizSequence}`,
+    hostId,
+    title: DEMO_QUIZ.title,
+    questions: DEMO_QUIZ.questions.map((question) => ({
+      ...question,
+      options: [...question.options],
+    })),
+    createdAt: now,
+    updatedAt: now,
+  }
+  quizzes.set(quiz.id, quiz)
+  return quiz
+}
+
+async function handleHttp(req, res) {
+  if (req.method === 'OPTIONS') {
+    sendNoContent(res)
+    return
+  }
+
+  const url = new URL(req.url ?? '/', `http://${req.headers.host ?? 'localhost'}`)
+  const path = url.pathname
+
+  if (req.method === 'GET' && path === '/health') {
+    sendJson(res, 200, {
+      ok: true,
+      rooms: rooms.size,
+      hosts: hosts.size,
+      quizzes: quizzes.size,
+      sessions: sessions.size,
+    })
+    return
+  }
+
+  if (req.method === 'POST' && path === '/api/auth/signup') {
+    const body = await readJson(req)
+    const email = typeof body?.email === 'string' ? body.email.trim().toLowerCase() : ''
+    const password = typeof body?.password === 'string' ? body.password : ''
+    if (!EMAIL_PATTERN.test(email) || email.length > 254) {
+      throw new HttpError(400, 'INVALID_CREDENTIALS', 'Enter a valid email address.')
+    }
+    if (password.length < 6 || password.length > 200) {
+      throw new HttpError(400, 'INVALID_CREDENTIALS', 'Password must be 6 to 200 characters.')
+    }
+    if (hosts.has(email)) {
+      throw new HttpError(
+        409,
+        'EMAIL_TAKEN',
+        'An account with that email already exists.',
+      )
+    }
+
+    const host = {
+      id: `host_${++hostSequence}`,
+      email,
+      password,
+      createdAt: new Date().toISOString(),
+    }
+    hosts.set(email, host)
+    seedDemoQuiz(host.id)
+    sendJson(res, 201, { token: issueToken(host.id), host: publicHost(host) })
+    return
+  }
+
+  if (req.method === 'POST' && path === '/api/auth/login') {
+    const body = await readJson(req)
+    const email = typeof body?.email === 'string' ? body.email.trim().toLowerCase() : ''
+    const password = typeof body?.password === 'string' ? body.password : ''
+    const host = hosts.get(email)
+    if (!host || host.password !== password) {
+      throw new HttpError(401, 'INVALID_CREDENTIALS', 'Email or password is incorrect.')
+    }
+    sendJson(res, 200, { token: issueToken(host.id), host: publicHost(host) })
+    return
+  }
+
+  if (req.method === 'GET' && path === '/api/auth/me') {
+    const host = requireHttpHost(req)
+    sendJson(res, 200, { host: publicHost(host) })
+    return
+  }
+
+  if (path === '/api/quizzes') {
+    const host = requireHttpHost(req)
+
+    if (req.method === 'GET') {
+      const list = [...quizzes.values()]
+        .filter((quiz) => quiz.hostId === host.id)
+        .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
+      sendJson(res, 200, { quizzes: list })
+      return
+    }
+
+    if (req.method === 'POST') {
+      const input = normalizeQuizInput(await readJson(req))
+      const now = new Date().toISOString()
+      const quiz = {
+        id: `quiz_${++quizSequence}`,
+        hostId: host.id,
+        title: input.title,
+        questions: input.questions,
+        createdAt: now,
+        updatedAt: now,
+      }
+      quizzes.set(quiz.id, quiz)
+      sendJson(res, 201, { quiz })
+      return
+    }
+  }
+
+  const quizMatch = path.match(/^\/api\/quizzes\/([^/]+)$/)
+  if (quizMatch) {
+    const host = requireHttpHost(req)
+    const quizId = decodeURIComponent(quizMatch[1])
+    const quiz = quizzes.get(quizId)
+    if (!quiz || quiz.hostId !== host.id) {
+      throw new HttpError(404, 'QUIZ_NOT_FOUND', 'Quiz not found.')
+    }
+
+    if (req.method === 'GET') {
+      sendJson(res, 200, { quiz })
+      return
+    }
+    if (req.method === 'PUT') {
+      const input = normalizeQuizInput(await readJson(req))
+      quiz.title = input.title
+      quiz.questions = input.questions
+      quiz.updatedAt = new Date().toISOString()
+      sendJson(res, 200, { quiz })
+      return
+    }
+    if (req.method === 'DELETE') {
+      quizzes.delete(quiz.id)
+      sendJson(res, 200, { ok: true })
+      return
+    }
+  }
+
+  if (req.method === 'GET' && path === '/api/sessions') {
+    const host = requireHttpHost(req)
+    const list = [...sessions.values()]
+      .filter((session) => session.hostId === host.id)
+      .sort((a, b) => b.endedAt.localeCompare(a.endedAt))
+      .map((session) => ({
+        id: session.id,
+        quizId: session.quizId,
+        quizTitle: session.quizTitle,
+        code: session.code,
+        startedAt: session.startedAt,
+        endedAt: session.endedAt,
+        playerCount: session.players.length,
+      }))
+    sendJson(res, 200, { sessions: list })
+    return
+  }
+
+  const sessionMatch = path.match(/^\/api\/sessions\/([^/]+)$/)
+  if (req.method === 'GET' && sessionMatch) {
+    const host = requireHttpHost(req)
+    const session = sessions.get(decodeURIComponent(sessionMatch[1]))
+    if (!session || session.hostId !== host.id) {
+      throw new HttpError(404, 'SESSION_NOT_FOUND', 'Session not found.')
+    }
+    sendJson(res, 200, { session })
+    return
+  }
+
+  sendJson(res, 404, { code: 'NOT_FOUND', message: 'Not found.' })
 }
 
 function makePlayer(nickname, { bot = false, socketId = null, eligibleFromIndex = 0 } = {}) {
@@ -141,6 +508,7 @@ function makePlayer(nickname, { bot = false, socketId = null, eligibleFromIndex 
     lastPoints: 0,
     lastAnswer: null,
     lastResult: null,
+    answers: new Map(),
   }
 }
 
@@ -256,7 +624,8 @@ function recordAnswer(room, player, choiceIndex, at) {
 }
 
 function sendQuestion(room) {
-  const q = QUIZ.questions[room.qIndex]
+  const questions = room.quiz.questions
+  const q = questions[room.qIndex]
   if (!q) return endGame(room)
 
   room.phase = 'question'
@@ -270,7 +639,7 @@ function sendQuestion(room) {
 
   room.question = {
     index: room.qIndex,
-    total: QUIZ.questions.length,
+    total: questions.length,
     type: q.type,
     text: q.text,
     options: q.options,
@@ -280,7 +649,7 @@ function sendQuestion(room) {
 
   emitQuestionToEveryone(room)
   emitAnswerCount(room)
-  log(`room ${room.code} question ${room.qIndex + 1}/${QUIZ.questions.length}`)
+  log(`room ${room.code} question ${room.qIndex + 1}/${questions.length}`)
 
   for (const player of room.players.values()) {
     if (!player.bot || !eligible(room, player)) continue
@@ -305,18 +674,29 @@ function sendQuestion(room) {
 function endQuestion(room) {
   if (room.phase !== 'question' || !room.question) return
   room.phase = 'reveal'
-  const q = QUIZ.questions[room.qIndex]
+  const q = room.quiz.questions[room.qIndex]
 
   for (const player of room.players.values()) {
     const answer = room.answers.get(player.id)
+    const correct = Boolean(
+      eligible(room, player) && answer && answer.choiceIndex === q.correctIndex,
+    )
     let points = 0
-    if (eligible(room, player) && answer && answer.choiceIndex === q.correctIndex) {
+    if (correct && answer) {
       const timeLeft = room.qEndsAt - answer.at
       points = Math.round((1000 * timeLeft) / room.qDurationMs)
     }
     player.score += points
     player.lastPoints = points
     player.lastAnswer = answer?.choiceIndex ?? null
+    player.answers.set(room.qIndex, {
+      questionIndex: room.qIndex,
+      choiceIndex: answer?.choiceIndex ?? null,
+      correct,
+      points,
+      answeredAt: answer ? new Date(answer.at).toISOString() : null,
+      responseMs: answer ? Math.max(0, answer.at - room.qStartsAt) : null,
+    })
   }
 
   const rows = ranked(room)
@@ -344,7 +724,7 @@ function endQuestion(room) {
 function advance(room) {
   if (room.phase !== 'reveal') return
   room.qIndex += 1
-  if (room.qIndex >= QUIZ.questions.length) {
+  if (room.qIndex >= room.quiz.questions.length) {
     endGame(room)
   } else {
     sendQuestion(room)
@@ -368,7 +748,35 @@ function endGame(room) {
 
   emitToHosts(room, 'game:ended', { leaderboard: fullRows(room) })
 
-  log(`room ${room.code} ended`, `${room.players.size} players`)
+  const endedAt = new Date().toISOString()
+  const session = {
+    id: `session_${++sessionSequence}`,
+    hostId: room.hostId,
+    quizId: room.quizId,
+    quizTitle: room.quiz.title,
+    code: room.code,
+    startedAt: new Date(room.startedAt ?? Date.now()).toISOString(),
+    endedAt,
+    players: [...room.players.values()].map((player) => ({
+      playerId: player.id,
+      nickname: player.nickname,
+      totalScore: player.score,
+      answers: room.quiz.questions.map(
+        (_question, index) =>
+          player.answers.get(index) ?? {
+            questionIndex: index,
+            choiceIndex: null,
+            correct: false,
+            points: 0,
+            answeredAt: null,
+            responseMs: null,
+          },
+      ),
+    })),
+  }
+  sessions.set(session.id, session)
+
+  log(`room ${room.code} ended`, `${room.players.size} players`, `session ${session.id}`)
 
   setTimeout(() => {
     if (rooms.get(room.code) === room) rooms.delete(room.code)
@@ -406,14 +814,15 @@ io.on('connection', (socket) => {
   log('connect', socket.id)
 
   socket.on('host:create_room', (payload) => {
-    const token = requireHost(socket)
-    if (!token) return
+    const hostId = requireHost(socket)
+    if (!hostId) return
 
     const quizId = String(payload?.quizId ?? '').trim()
-    if (quizId !== QUIZ.id) {
+    const quiz = quizzes.get(quizId)
+    if (!quiz || quiz.hostId !== hostId) {
       return fail(socket, 'QUIZ_NOT_FOUND', 'Quiz not found for this host.')
     }
-    if (QUIZ.questions.length === 0) {
+    if (quiz.questions.length === 0) {
       return fail(socket, 'QUIZ_EMPTY', 'That quiz has no questions.')
     }
 
@@ -421,7 +830,8 @@ io.on('connection', (socket) => {
     const room = {
       code,
       quizId,
-      hostToken: token,
+      quiz,
+      hostId,
       hostSockets: new Set([socket.id]),
       players: new Map(),
       phase: 'lobby',
@@ -458,13 +868,13 @@ io.on('connection', (socket) => {
   })
 
   socket.on('host:start', (payload) => {
-    const token = requireHost(socket)
-    if (!token) return
+    const hostId = requireHost(socket)
+    if (!hostId) return
 
     const code = String(payload?.code ?? '').trim()
     const room = rooms.get(code)
     if (!room) return fail(socket, 'ROOM_NOT_FOUND', 'Room not found. Check the code.')
-    if (!room.hostSockets.has(socket.id)) {
+    if (room.hostId !== hostId) {
       return fail(socket, 'NOT_HOST', 'Authenticated host does not own that room.')
     }
     if (room.phase === 'ended') {
@@ -607,6 +1017,7 @@ httpServer.on('error', (error) => {
 })
 
 httpServer.listen(PORT, () => {
-  log(`mock server on http://localhost:${PORT}  (quiz: ${QUIZ.title})`)
+  log(`mock server on http://localhost:${PORT}`)
+  log(`REST + Socket.IO ready · demo quiz: ${DEMO_QUIZ.title}`)
   log('health check: /health')
 })

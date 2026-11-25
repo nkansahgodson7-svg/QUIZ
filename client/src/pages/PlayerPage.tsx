@@ -63,6 +63,7 @@ export function PlayerPage() {
   })
 
   const socketRef = useRef<GameSocket | null>(null)
+  const questionRef = useRef<GameQuestion | null>(null)
   const codeRef = useRef(initial.code)
   const rejoinRef = useRef<{ code: string; playerToken: string } | null>(
     initial.stored
@@ -80,6 +81,7 @@ export function PlayerPage() {
   const [me, setMe] = useState<JoinedPayload | null>(null)
   const [question, setQuestion] = useState<GameQuestion | null>(null)
   const [selection, setSelection] = useState<{ index: number; choiceIndex: number } | null>(null)
+  const [ineligibleIndex, setIneligibleIndex] = useState<number | null>(null)
   const [result, setResult] = useState<PlayerResult | null>(null)
   const [final, setFinal] = useState<FinalState | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -122,12 +124,14 @@ export function PlayerPage() {
     })
 
     socket.on('game:question', (payload) => {
+      questionRef.current = payload
       setQuestion(payload)
       setSelection(
         payload.myChoiceIndex == null
           ? null
           : { index: payload.index, choiceIndex: payload.myChoiceIndex },
       )
+      setIneligibleIndex(null)
       setResult(null)
       setPhase('question')
     })
@@ -148,7 +152,14 @@ export function PlayerPage() {
     })
 
     socket.on('error', (payload) => {
-      setError(payload.message)
+      if (payload.code === 'NOT_ELIGIBLE') {
+        // The server rejected an optimistic answer from a late joiner. Drop the
+        // selection and lock this question so the UI never claims "Locked in".
+        setSelection(null)
+        setIneligibleIndex(questionRef.current?.index ?? null)
+      } else {
+        setError(payload.message)
+      }
       if (joiningRef.current) {
         joiningRef.current = false
         if (pendingRejoin.current) {
@@ -176,8 +187,14 @@ export function PlayerPage() {
 
   const selectedChoice =
     selection && question && selection.index === question.index ? selection.choiceIndex : null
+  const ineligible =
+    phase === 'question' && question != null && ineligibleIndex === question.index
   const canAnswer =
-    phase === 'question' && countdown.started && !countdown.ended && connection === 'connected'
+    phase === 'question' &&
+    countdown.started &&
+    !countdown.ended &&
+    connection === 'connected' &&
+    !ineligible
 
   function joinGame(event: React.FormEvent) {
     event.preventDefault()
@@ -235,6 +252,7 @@ export function PlayerPage() {
     setNickname('')
     setQuestion(null)
     setSelection(null)
+    setIneligibleIndex(null)
     setResult(null)
     setFinal(null)
     setError(null)
@@ -301,6 +319,7 @@ export function PlayerPage() {
             selectedChoice={selectedChoice}
             started={countdown.started}
             ended={countdown.ended}
+            ineligible={ineligible}
             online={connection === 'connected'}
             onChoose={chooseAnswer}
           />
@@ -495,6 +514,7 @@ function QuestionView({
   selectedChoice,
   started,
   ended,
+  ineligible,
   online,
   onChoose,
 }: {
@@ -504,10 +524,11 @@ function QuestionView({
   selectedChoice: number | null
   started: boolean
   ended: boolean
+  ineligible: boolean
   online: boolean
   onChoose: (choiceIndex: number) => void
 }) {
-  const locked = !started || ended || !online
+  const locked = !started || ended || !online || ineligible
 
   return (
     <div className="flex flex-1 flex-col animate-rise">
@@ -575,21 +596,25 @@ function QuestionView({
       <div className="mt-auto pt-6">
         <p
           className={`rounded-2xl px-4 py-3 text-center text-sm ${
-            ended
-              ? 'bg-coral-400/10 text-[#ffc4b8]'
-              : selectedChoice != null
-                ? 'bg-acid-400/10 text-acid-200'
-                : 'bg-white/[0.04] text-mist-400'
+            ineligible
+              ? 'bg-iris-500/10 text-iris-400'
+              : ended
+                ? 'bg-coral-400/10 text-[#ffc4b8]'
+                : selectedChoice != null
+                  ? 'bg-acid-400/10 text-acid-200'
+                  : 'bg-white/[0.04] text-mist-400'
           }`}
           aria-live="polite"
         >
-          {!started
-            ? 'Get ready — answers open when the timer starts.'
-            : ended
-              ? 'Time is up — waiting for the results…'
-              : selectedChoice != null
-                ? 'Locked in. Tap another option to change it.'
-                : 'Tap your answer. You can change it until time runs out.'}
+          {ineligible
+            ? 'You joined during this question — you can start scoring on the next one.'
+            : !started
+              ? 'Get ready — answers open when the timer starts.'
+              : ended
+                ? 'Time is up — waiting for the results…'
+                : selectedChoice != null
+                  ? 'Locked in. Tap another option to change it.'
+                  : 'Tap your answer. You can change it until time runs out.'}
         </p>
       </div>
     </div>
