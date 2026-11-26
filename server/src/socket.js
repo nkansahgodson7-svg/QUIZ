@@ -61,6 +61,21 @@ export function attachSocketHandlers(io, rooms) {
       return true;
     }
 
+    function requireHostRoom(payload) {
+      if (!requireHost()) return null;
+
+      const room = rooms.getRoom(payload?.code);
+      if (!room) {
+        emitError(socket, 'ROOM_NOT_FOUND', 'Room not found. Check the code.');
+        return null;
+      }
+      if (room.hostId !== socket.data.hostId) {
+        emitError(socket, 'NOT_HOST', 'Only this room\'s host can control the game.');
+        return null;
+      }
+      return room;
+    }
+
     socket.on(
       CLIENT_EVENTS.HOST_CREATE_ROOM,
       safeHandler(socket, async (payload) => {
@@ -126,6 +141,33 @@ export function attachSocketHandlers(io, rooms) {
     );
 
     socket.on(
+      CLIENT_EVENTS.HOST_PAUSE,
+      safeHandler(socket, (payload) => {
+        const room = requireHostRoom(payload);
+        if (!room) return;
+        room.pause();
+      }),
+    );
+
+    socket.on(
+      CLIENT_EVENTS.HOST_RESUME,
+      safeHandler(socket, (payload) => {
+        const room = requireHostRoom(payload);
+        if (!room) return;
+        room.resume();
+      }),
+    );
+
+    socket.on(
+      CLIENT_EVENTS.HOST_END_GAME,
+      safeHandler(socket, (payload) => {
+        const room = requireHostRoom(payload);
+        if (!room) return;
+        room.endGame();
+      }),
+    );
+
+    socket.on(
       CLIENT_EVENTS.PLAYER_JOIN,
       safeHandler(socket, (payload) => {
         const room = rooms.getRoom(payload?.code);
@@ -152,6 +194,7 @@ export function attachSocketHandlers(io, rooms) {
 
         const currentQuestion = room.currentQuestionPayload(player.id);
         if (currentQuestion) socket.emit(SERVER_EVENTS.GAME_QUESTION, currentQuestion);
+        if (room.paused) socket.emit(SERVER_EVENTS.GAME_PAUSED, room.pausedPayload());
       }),
     );
 
@@ -194,6 +237,7 @@ export function attachSocketHandlers(io, rooms) {
         ) {
           socket.emit(SERVER_EVENTS.QUESTION_RESULT, player.lastResult);
         }
+        if (room.paused) socket.emit(SERVER_EVENTS.GAME_PAUSED, room.pausedPayload());
       }),
     );
 

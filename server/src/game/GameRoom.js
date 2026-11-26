@@ -53,6 +53,11 @@ export class GameRoom {
     this.joinCounter = 0;
     this.questionTimer = null;
     this.revealTimer = null;
+    this.revealEndsAt = null;
+    this.paused = false;
+    this.pausedAt = null;
+    this.remainingMs = 0;
+    this.pausedDurationMs = 0;
   }
 
   get playerCount() {
@@ -131,6 +136,7 @@ export class GameRoom {
     const previousSocketId = player.socketId;
     player.socketId = socketId;
     player.connected = true;
+    if (this.isActive) this.emitLiveState();
     return { player, previousSocketId };
   }
 
@@ -148,6 +154,7 @@ export class GameRoom {
 
     player.connected = false;
     player.socketId = null;
+    if (this.isActive) this.emitLiveState();
     return { changed: true, removed: false };
   }
 
@@ -173,6 +180,9 @@ export class GameRoom {
       throw new GameError('NOT_IN_ROOM', 'Join the room before answering.');
     }
 
+    if (this.paused) {
+      return { accepted: false, reason: 'GAME_PAUSED' };
+    }
     if (this.state !== 'question' || !this.currentQuestion) {
       return { accepted: false, reason: 'QUESTION_CLOSED' };
     }
@@ -202,6 +212,7 @@ export class GameRoom {
       receivedAt: now,
     });
     this._emitAnswerCount();
+    this.emitLiveState();
     return { accepted: true };
   }
 
@@ -218,7 +229,138 @@ export class GameRoom {
       startsAt: this.currentQuestion.startsAt,
       durationMs: this.currentQuestion.durationMs,
       myChoiceIndex: answer ? answer.choiceIndex : null,
+      paused: this.paused,
+      remainingMs: this._phaseRemainingMs(),
     };
+  }
+
+  liveState() {
+    if (!this.isActive || !this.currentQuestion) return null;
+
+    const question = this.quiz.questions[this.currentIndex];
+    const eligiblePlayers = [...this.players.values()].filter(
+      (player) => player.eligibleFromIndex <= this.currentIndex,
+    );
+    const choiceCounts = question.options.map(() => 0);
+    for (const player of eligiblePlayers) {
+      const answer = this.currentQuestion.answers.get(player.id);
+      if (answer) choiceCounts[answer.choiceIndex] += 1;
+    }
+
+    return {
+      index: this.currentIndex,
+      total: this.quiz.questions.length,
+      phase: this.state === 'reveal' ? 'reveal' : 'question',
+      correctIndex: question.correctIndex,
+      answered: this.currentQuestion.answers.size,
+      eligible: this.currentQuestion.eligibleCount,
+      choiceCounts,
+      players: eligiblePlayers.map((player) => ({
+        playerId: player.id,
+        nickname: player.nickname,
+        status: !player.connected
+          ? 'offline'
+          : this.currentQuestion.answers.has(player.id)
+            ? 'answered'
+            : 'thinking',
+        choiceIndex: this.currentQuestion.answers.get(player.id)?.choiceIndex ?? null,
+        totalScore: player.totalScore,
+      })),
+    };
+  }
+
+  emitLiveState() {
+    const payload = this.liveState();
+    if (payload) this.emitToHost(SERVER_EVENTS.HOST_LIVE_STATE, payload);
+  }
+
+  _phaseRemainingMs(now = Date.now()) {
+    if (this.paused) return Math.max(0, this.remainingMs);
+    if (this.state === 'question' && this.currentQuestion) {
+      return Math.max(0, this.currentQuestion.endsAt - now);
+    }
+    if (this.state === 'reveal') {
+      return Math.max(0, (this.revealEndsAt ?? now) - now);
+    }
+    return 0;
+  }
+
+  pausedPayload(remainingMs = this._phaseRemainingMs()) {
+    return {
+      index: this.currentIndex,
+      phase: this.state === 'reveal' ? 'reveal' : 'question',
+      remainingMs: Math.max(0, remainingMs),
+    };
+  }
+
+  pause() {
+    if (this.paused || !this.isActive || !this.currentQuestion) return false;
+
+    const now = Date.now();
+    const remainingMs = this._phaseRemainingMs(now);
+
+    if (this.questionTimer) clearTimeout(this.questionTimer);
+    if (this.revealTimer) clearTimeout(this.revealTimer);
+    this.questionTimer = null;
+    this.revealTimer = null;
+
+    this.paused = true;
+    this.pausedAt = now;
+    this.remainingMs = remainingMs;
+
+    this.io.to(this.code).emit(SERVER_EVENTS.GAME_PAUSED, this.pausedPayload(remainingMs));
+    return true;
+  }
+
+  resume() {
+    if (!this.paused) return false;
+
+    const now = Date.now();
+    const pausedFor = Math.max(0, now - (this.pausedAt ?? now));
+    const remainingMs = Math.max(0, this.remainingMs);
+    const phase = this.state === 'reveal' ? 'reveal' : 'question';
+
+    this.pausedDurationMs += pausedFor;
+
+    if (this.currentQuestion) {
+      // Move the whole question window forward, including received timestamps,
+      // so scoring elapsed time excludes the pause exactly.
+      this.currentQuestion.startsAt += pausedFor;
+      this.currentQuestion.endsAt += pausedFor;
+      for (const answer of this.currentQuestion.answers.values()) {
+        answer.receivedAt += pausedFor;
+      }
+    }
+
+    if (this.state === 'question') {
+      this.questionTimer = setTimeout(() => {
+        this._endQuestion(this.currentIndex);
+      }, remainingMs);
+    } else if (this.state === 'reveal') {
+      this.revealEndsAt = (this.revealEndsAt ?? now) + pausedFor;
+      this.revealTimer = setTimeout(() => {
+        this._advance();
+      }, remainingMs);
+    }
+
+    this.paused = false;
+    this.pausedAt = null;
+    this.remainingMs = 0;
+
+    this.io.to(this.code).emit(SERVER_EVENTS.GAME_RESUMED, {
+      index: this.currentIndex,
+      phase,
+      remainingMs,
+      startsAt: this.currentQuestion?.startsAt ?? null,
+      durationMs: this.currentQuestion?.durationMs ?? null,
+    });
+    return true;
+  }
+
+  endGame() {
+    if (this.state === 'lobby' || this.state === 'ended') return false;
+    this._endGame();
+    return true;
   }
 
   _emitAnswerCount() {
@@ -241,6 +383,11 @@ export class GameRoom {
     const durationMs = Math.max(1, question.durationSec * 1000);
 
     this.state = 'question';
+    this.paused = false;
+    this.pausedAt = null;
+    this.remainingMs = 0;
+    this.pausedDurationMs = 0;
+    this.revealEndsAt = null;
     // Eligibility is fixed for the duration of a question: players who join
     // later are only eligible from the next question, so count once here.
     let eligibleCount = 0;
@@ -277,6 +424,7 @@ export class GameRoom {
     }
 
     this._emitAnswerCount();
+    this.emitLiveState();
 
     this.questionTimer = setTimeout(() => {
       this._endQuestion(this.currentIndex);
@@ -284,6 +432,7 @@ export class GameRoom {
   }
 
   _endQuestion(index) {
+    if (this.paused) return;
     if (this.state !== 'question' || !this.currentQuestion) return;
     if (this.currentQuestion.index !== index) return;
 
@@ -341,14 +490,19 @@ export class GameRoom {
       }
     }
 
+    this.emitLiveState();
+
+    this.revealEndsAt = Date.now() + this.revealMs;
     this.revealTimer = setTimeout(() => {
       this._advance();
     }, this.revealMs);
   }
 
   _advance() {
+    if (this.paused) return;
     if (this.state !== 'reveal') return;
     this.revealTimer = null;
+    this.revealEndsAt = null;
 
     const nextIndex = this.currentIndex + 1;
     if (nextIndex >= this.quiz.questions.length) {
@@ -363,11 +517,17 @@ export class GameRoom {
   _endGame() {
     if (this.state === 'ended') return;
 
+    if (this.questionTimer) clearTimeout(this.questionTimer);
+    if (this.revealTimer) clearTimeout(this.revealTimer);
     this.questionTimer = null;
     this.revealTimer = null;
     this.state = 'ended';
     this.endedAt = Date.now();
     this.currentQuestion = null;
+    this.revealEndsAt = null;
+    this.paused = false;
+    this.pausedAt = null;
+    this.remainingMs = 0;
 
     const leaderboard = buildLeaderboard(this.players.values());
     const top5 = topFive(leaderboard);
@@ -398,5 +558,6 @@ export class GameRoom {
     if (this.revealTimer) clearTimeout(this.revealTimer);
     this.questionTimer = null;
     this.revealTimer = null;
+    this.revealEndsAt = null;
   }
 }

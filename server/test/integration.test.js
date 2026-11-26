@@ -690,6 +690,123 @@ test('socket errors: joining an ended game emits GAME_ENDED', { timeout: 20_000 
   closeSockets(late, room.socket);
 });
 
+test('live player state and pause/resume stay in sync for host and players', { timeout: 30_000 }, async () => {
+  const host = await signupHost('pause-flow');
+  const quiz = await createQuiz(host.token, [
+    {
+      type: 'true_false',
+      text: 'Pausing freezes the room.',
+      options: ['True', 'False'],
+      correctIndex: 0,
+      durationSec: 2,
+    },
+  ]);
+
+  const hostRoom = await createHostRoom(host.token, quiz.id);
+  const { socket: hostSocket, inbox: hostInbox, code } = hostRoom;
+  const ama = await joinPlayer(code, 'Ama');
+  const kofi = await joinPlayer(code, 'Kofi');
+
+  hostSocket.emit('host:start', { code });
+  const [hostQuestion, amaQuestion, kofiQuestion] = await Promise.all([
+    hostInbox.take('game:question', { predicate: (payload) => payload.index === 0 }),
+    ama.inbox.take('game:question', { predicate: (payload) => payload.index === 0 }),
+    kofi.inbox.take('game:question', { predicate: (payload) => payload.index === 0 }),
+  ]);
+  assert.equal(hostQuestion.startsAt, amaQuestion.startsAt);
+  assert.equal(amaQuestion.startsAt, kofiQuestion.startsAt);
+
+  const initialLive = await hostInbox.take('host:live_state', {
+    predicate: (payload) => payload.index === 0 && payload.answered === 0,
+  });
+  assert.equal(initialLive.phase, 'question');
+  assert.equal(initialLive.correctIndex, 0);
+  assert.equal(initialLive.eligible, 2);
+  assert.deepEqual(initialLive.choiceCounts, [0, 0]);
+  assert.deepEqual(
+    initialLive.players.map((player) => player.status),
+    ['thinking', 'thinking'],
+  );
+
+  ama.socket.emit('player:answer', { code, questionIndex: 0, choiceIndex: 0 });
+  const answeredLive = await hostInbox.take('host:live_state', {
+    predicate: (payload) => payload.index === 0 && payload.answered === 1,
+  });
+  assert.deepEqual(answeredLive.choiceCounts, [1, 0]);
+  assert.deepEqual(
+    answeredLive.players.map((player) => player.status),
+    ['answered', 'thinking'],
+  );
+  assert.equal(answeredLive.players[0].choiceIndex, 0);
+
+  hostSocket.emit('host:pause', { code });
+  const [hostPaused, amaPaused, kofiPaused] = await Promise.all([
+    hostInbox.take('game:paused'),
+    ama.inbox.take('game:paused'),
+    kofi.inbox.take('game:paused'),
+  ]);
+  assert.equal(hostPaused.index, 0);
+  assert.equal(hostPaused.phase, 'question');
+  assert.deepEqual(amaPaused, hostPaused);
+  assert.deepEqual(kofiPaused, hostPaused);
+  assert.ok(hostPaused.remainingMs > 0);
+  assert.ok(hostPaused.remainingMs <= 2000);
+
+  // Answers sent while paused are rejected and do not change live stats.
+  kofi.socket.emit('player:answer', { code, questionIndex: 0, choiceIndex: 0 });
+  await sleep(200);
+  assert.ok(
+    hostInbox.queued('host:live_state').every((payload) => payload.answered <= 1),
+    'paused answers must not be counted',
+  );
+
+  // The frozen timer must outlast the original 2s deadline without advancing.
+  await sleep(2200);
+  assert.equal(ama.inbox.queued('question:result').length, 0);
+
+  hostSocket.emit('host:resume', { code });
+  const [hostResumed, amaResumed, kofiResumed] = await Promise.all([
+    hostInbox.take('game:resumed'),
+    ama.inbox.take('game:resumed'),
+    kofi.inbox.take('game:resumed'),
+  ]);
+  assert.equal(hostResumed.index, 0);
+  assert.equal(hostResumed.phase, 'question');
+  assert.ok(hostResumed.remainingMs > 0);
+  assert.ok(hostResumed.startsAt > hostQuestion.startsAt);
+  assert.equal(hostResumed.durationMs, 2000);
+  assert.deepEqual(amaResumed, hostResumed);
+  assert.deepEqual(kofiResumed, hostResumed);
+
+  kofi.socket.emit('player:answer', { code, questionIndex: 0, choiceIndex: 0 });
+  const resumedLive = await hostInbox.take('host:live_state', {
+    predicate: (payload) => payload.index === 0 && payload.answered === 2,
+  });
+  assert.deepEqual(resumedLive.choiceCounts, [2, 0]);
+  assert.deepEqual(
+    resumedLive.players.map((player) => player.status),
+    ['answered', 'answered'],
+  );
+
+  const [amaResult, kofiResult] = await Promise.all([
+    ama.inbox.take('question:result', { predicate: (result) => result.index === 0 }),
+    kofi.inbox.take('question:result', { predicate: (result) => result.index === 0 }),
+  ]);
+  assert.ok(amaResult.points > 0);
+  assert.ok(kofiResult.points > 0);
+
+  const revealLive = await hostInbox.take('host:live_state', {
+    predicate: (payload) => payload.index === 0 && payload.phase === 'reveal',
+  });
+  assert.equal(revealLive.answered, 2);
+  assert.equal(revealLive.eligible, 2);
+
+  const ended = await hostInbox.take('game:ended', { timeoutMs: 5000 });
+  assert.equal(ended.leaderboard.length, 2);
+
+  closeSockets(hostSocket, ama.socket, kofi.socket);
+});
+
 test('socket errors: rejoin with a bad player token emits INVALID_PLAYER_TOKEN', { timeout: 15_000 }, async () => {
   const host = await signupHost('bad-token');
   const quiz = await createQuiz(host.token, [
