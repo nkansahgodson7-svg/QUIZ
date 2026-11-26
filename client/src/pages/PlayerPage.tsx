@@ -55,11 +55,15 @@ export function PlayerPage() {
 
   const [initial] = useState(() => {
     const urlCode = (searchParams.get('code') ?? '').replace(/\D/g, '').slice(0, 6)
+    // Shared invite links collect junk (?code=1-23456x, duplicate code params).
+    // Canonicalize to /play?code=<six digits> so the address bar stays clean.
+    const canonicalPath = `/play${urlCode ? `?code=${urlCode}` : ''}`
+    const needsCanonical = `${window.location.pathname}${window.location.search}` !== canonicalPath
     const stored = loadStoredPlayer()
     if (stored && (!urlCode || urlCode === stored.code)) {
-      return { stored, code: stored.code }
+      return { stored, code: stored.code, canonicalPath, needsCanonical }
     }
-    return { stored: null, code: urlCode }
+    return { stored: null, code: urlCode, canonicalPath, needsCanonical }
   })
 
   const socketRef = useRef<GameSocket | null>(null)
@@ -85,6 +89,10 @@ export function PlayerPage() {
   const [result, setResult] = useState<PlayerResult | null>(null)
   const [final, setFinal] = useState<FinalState | null>(null)
   const [error, setError] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (initial.needsCanonical) navigate(initial.canonicalPath, { replace: true })
+  }, [initial.needsCanonical, initial.canonicalPath, navigate])
 
   useEffect(() => {
     const socket = createSocket()
