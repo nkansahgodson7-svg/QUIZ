@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { WifiOff } from 'lucide-react'
+import { PulseDot } from '../Loading'
 import type { HostLiveState, HostPlayerStatus } from '../../lib/contract'
 
 const FILTERS = [
@@ -94,11 +95,16 @@ export function PlayersPanel({
       </div>
 
       {visible.length === 0 ? (
-        <p className="mt-3 rounded-xl border border-dashed border-line-strong px-3 py-6 text-center text-xs text-ink-3">
-          {players.length === 0
-            ? 'Player status will appear here as the question runs.'
-            : 'No players match this filter.'}
-        </p>
+        <div className="mt-3 rounded-xl border border-dashed border-line-strong px-3 py-6 text-center text-xs text-ink-3">
+          {players.length === 0 ? (
+            <span className="inline-flex items-center gap-2 font-semibold">
+              <PulseDot className="size-1.5" tone="bg-warn" />
+              Waiting for player status…
+            </span>
+          ) : (
+            'No players match this filter.'
+          )}
+        </div>
       ) : (
         <ul className="mt-2 max-h-60 divide-y divide-line overflow-y-auto pr-1">
           {visible.map((player) => (

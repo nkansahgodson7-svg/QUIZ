@@ -3,7 +3,6 @@ import {
   Check,
   Copy,
   ListChecks,
-  Loader2,
   LogOut,
   Play,
   RotateCcw,
@@ -18,6 +17,7 @@ import { SavedQuizzes } from '../components/host/SavedQuizzes'
 import { ConnectionPill, type ConnectionState } from '../components/ConnectionPill'
 import { ErrorBanner } from '../components/ErrorBanner'
 import { Leaderboard } from '../components/Leaderboard'
+import { PulseDot, Skeleton, Spinner } from '../components/Loading'
 import { Logo } from '../components/Logo'
 import { useCountdown } from '../hooks/useCountdown'
 import {
@@ -68,6 +68,7 @@ export function HostPage() {
   const [quizzesLoading, setQuizzesLoading] = useState(false)
   const [openingId, setOpeningId] = useState<string | null>(null)
   const [deletingId, setDeletingId] = useState<string | null>(null)
+  const [starting, setStarting] = useState(false)
 
   const [code, setCode] = useState('')
   const [playerCount, setPlayerCount] = useState(0)
@@ -137,6 +138,7 @@ export function HostPage() {
       setAnswered(null)
       setLiveState(null)
       setQuestionEnded(false)
+      setStarting(false)
       setPhase('live')
     })
     socket.on('game:answer_count', (payload) => setAnswered(payload))
@@ -153,6 +155,7 @@ export function HostPage() {
     })
     socket.on('error', (payload) => {
       setOpeningId(null)
+      setStarting(false)
       if (payload.code === 'AUTH_REQUIRED') {
         resetSession(payload.message)
         return
@@ -240,6 +243,7 @@ export function HostPage() {
     setQuestionEnded(false)
     setQuizzes([])
     setQuizzesLoading(false)
+    setStarting(false)
     setBuilderOpen(false)
     setBuilderQuiz(null)
     setTab('quizzes')
@@ -271,8 +275,9 @@ export function HostPage() {
   }
 
   function startGame() {
-    if (!socketRef.current || !code) return
+    if (!socketRef.current || !code || starting) return
     setError(null)
+    setStarting(true)
     socketRef.current.emit('host:start', { code })
   }
 
@@ -300,6 +305,7 @@ export function HostPage() {
     setQuestionEnded(false)
     setError(null)
     setOpeningId(null)
+    setStarting(false)
     setTab('quizzes')
     if (token) void reloadQuizzes(token)
   }
@@ -365,6 +371,7 @@ export function HostPage() {
           copied={copied}
           onCopy={copyText}
           onStart={startGame}
+          starting={starting}
           online={connection === 'connected'}
         />
       )
@@ -416,11 +423,11 @@ export function HostPage() {
               Open a room, edit a quiz, or check how the last game went.
             </p>
           </div>
-          <div className="flex rounded-xl border border-line bg-card p-1">
+          <div className="flex w-full rounded-xl border border-line bg-card p-1 sm:w-auto">
             <button
               type="button"
               onClick={() => setTab('quizzes')}
-              className={`inline-flex items-center gap-2 rounded-lg px-3 py-2 text-sm font-bold transition-colors ${
+              className={`inline-flex flex-1 items-center justify-center gap-2 rounded-lg px-3 py-2 text-sm font-bold transition-colors sm:flex-none ${
                 tab === 'quizzes' ? 'bg-ink text-paper' : 'text-ink-2 hover:text-ink'
               }`}
             >
@@ -430,7 +437,7 @@ export function HostPage() {
             <button
               type="button"
               onClick={() => setTab('results')}
-              className={`inline-flex items-center gap-2 rounded-lg px-3 py-2 text-sm font-bold transition-colors ${
+              className={`inline-flex flex-1 items-center justify-center gap-2 rounded-lg px-3 py-2 text-sm font-bold transition-colors sm:flex-none ${
                 tab === 'results' ? 'bg-ink text-paper' : 'text-ink-2 hover:text-ink'
               }`}
             >
@@ -464,7 +471,7 @@ export function HostPage() {
   return (
     <div className="flex min-h-svh flex-col">
       <header className="border-b border-line bg-paper">
-        <div className="mx-auto flex w-full max-w-6xl items-center justify-between gap-3 px-5 py-3 sm:px-8">
+        <div className="mx-auto flex w-full max-w-6xl items-center justify-between gap-3 px-4 py-3 sm:px-8">
           <div className="flex items-center gap-2.5">
             <Logo />
             <span className="hidden rounded-md border border-line bg-card px-2 py-1 text-xs font-bold text-ink-2 sm:inline">
@@ -493,7 +500,7 @@ export function HostPage() {
         </div>
       </header>
 
-      <main className="mx-auto w-full max-w-6xl flex-1 px-5 py-6 sm:px-8">
+      <main className="mx-auto w-full max-w-6xl flex-1 px-4 py-6 pb-[max(1.5rem,env(safe-area-inset-bottom))] sm:px-8">
         {authStatus === 'authenticated' && (
           <>
             <ErrorBanner message={error} onDismiss={() => setError(null)} />
@@ -514,9 +521,18 @@ export function HostPage() {
 
 function CheckingView() {
   return (
-    <div className="my-auto py-20 text-center">
-      <Loader2 className="mx-auto size-5 animate-spin text-ink-3" />
-      <p className="mt-3 text-sm text-ink-2">Checking your host session…</p>
+    <div className="mx-auto my-auto w-full max-w-md py-16" role="status" aria-live="polite">
+      <span className="sr-only">Checking your host session…</span>
+      <div className="flex items-center gap-2.5">
+        <Spinner className="size-4 text-cobalt" />
+        <p className="text-sm font-semibold text-ink-2">Checking your host session…</p>
+      </div>
+      <div className="card mt-4 p-5">
+        <Skeleton className="h-4 w-48 max-w-full" />
+        <Skeleton className="mt-2 h-4 w-32" />
+        <Skeleton className="mt-4 h-10 w-full" />
+        <Skeleton className="mt-2 h-10 w-2/3" />
+      </div>
     </div>
   )
 }
@@ -528,6 +544,7 @@ function LobbyView({
   copied,
   onCopy,
   onStart,
+  starting,
   online,
 }: {
   code: string
@@ -536,6 +553,7 @@ function LobbyView({
   copied: 'code' | 'link' | null
   onCopy: (value: string, kind: 'code' | 'link') => void
   onStart: () => void
+  starting: boolean
   online: boolean
 }) {
   const digits = code.padStart(6, '0').split('')
@@ -549,7 +567,7 @@ function LobbyView({
           {digits.map((digit, index) => (
             <span
               key={index}
-              className="grid h-[4.5rem] w-12 place-items-center rounded-xl border-2 border-ink bg-card text-4xl font-extrabold tabular-nums sm:h-24 sm:w-16 sm:text-5xl"
+              className="grid h-14 w-9 place-items-center rounded-xl border-2 border-ink bg-card text-3xl font-extrabold tabular-nums sm:h-24 sm:w-16 sm:text-5xl"
             >
               {digit}
             </span>
@@ -592,19 +610,31 @@ function LobbyView({
       <div className="mt-7 flex flex-wrap items-end justify-between gap-6">
         <div>
           <p className="text-sm font-bold text-ink-2">Players in the room</p>
-          <p className="mt-1 text-6xl leading-none font-extrabold tabular-nums">{playerCount}</p>
+          <p
+            key={playerCount}
+            className="mt-1 text-5xl leading-none font-extrabold tabular-nums sm:text-6xl animate-pop"
+          >
+            {playerCount}
+          </p>
           {playerCount === 0 && (
-            <p className="mt-2 text-sm text-ink-3">Waiting for the first player to join.</p>
+            <p className="mt-2 inline-flex items-center gap-2 text-sm text-ink-3">
+              <PulseDot className="size-1.5" tone="bg-warn" />
+              Waiting for the first player to join.
+            </p>
           )}
         </div>
         <button
           type="button"
           onClick={onStart}
-          disabled={!online}
-          className="btn-primary px-6 py-4 text-base"
+          disabled={!online || starting}
+          className="btn-primary w-full px-6 py-4 text-base sm:w-auto"
         >
-          <Play className="size-4" fill="currentColor" />
-          Start game
+          {starting ? (
+            <Spinner className="size-4" />
+          ) : (
+            <Play className="size-4" fill="currentColor" />
+          )}
+          {starting ? 'Starting…' : 'Start game'}
         </button>
       </div>
     </div>

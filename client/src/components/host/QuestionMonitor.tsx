@@ -1,4 +1,5 @@
 import { ChoiceShape, choiceColor } from '../ChoiceShape'
+import { PulseDot, Skeleton } from '../Loading'
 import type { GameQuestion, HostLiveState } from '../../lib/contract'
 
 export function QuestionMonitor({
@@ -70,14 +71,20 @@ export function QuestionMonitor({
                     </span>
                   )}
                 </div>
-                <span className="w-16 shrink-0 text-right text-xs font-bold text-ink-2 tabular-nums">
-                  {count == null ? '—' : count}
-                  {percent != null && (
-                    <span className="font-semibold text-ink-3"> ({percent}%)</span>
+                <span className="flex w-16 shrink-0 items-center justify-end text-right text-xs font-bold text-ink-2 tabular-nums">
+                  {count == null ? (
+                    <Skeleton className="h-3 w-8" />
+                  ) : (
+                    <>
+                      {count}
+                      {percent != null && (
+                        <span className="font-semibold text-ink-3"> ({percent}%)</span>
+                      )}
+                    </>
                   )}
                 </span>
               </div>
-              <div className="h-1.5 bg-line/40">
+              <div className={`h-1.5 ${live ? 'bg-line/40' : 'skeleton'}`}>
                 <div
                   className="h-full transition-[width] duration-300"
                   style={{
@@ -92,9 +99,16 @@ export function QuestionMonitor({
       </ul>
 
       <p className="mt-auto pt-4 text-xs font-semibold text-ink-2">
-        {locked
-          ? 'Answers are locked — results are landing on player phones.'
-          : 'Players answer on their phones and can change their answer until the clock runs out.'}
+        {locked ? (
+          'Answers are locked — results are landing on player phones.'
+        ) : live ? (
+          'Players answer on their phones and can change their answer until the clock runs out.'
+        ) : (
+          <span className="inline-flex items-center gap-2">
+            <PulseDot className="size-1.5" />
+            Collecting the first answers…
+          </span>
+        )}
       </p>
     </section>
   )

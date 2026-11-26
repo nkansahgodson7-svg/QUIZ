@@ -1,5 +1,6 @@
 import { Check, CircleStop, Copy, Flag } from 'lucide-react'
 import { Leaderboard } from '../Leaderboard'
+import { PulseDot } from '../Loading'
 import { TimerBar } from '../Timer'
 import type {
   AnswerCount,
@@ -64,8 +65,9 @@ export function LiveConsole({
                 }`}
                 aria-live="polite"
               >
-                <span
-                  className={`size-1.5 rounded-full ${locked ? 'bg-warn' : 'bg-correct'}`}
+                <PulseDot
+                  className="size-1.5"
+                  tone={locked ? 'bg-warn' : 'bg-correct'}
                 />
                 {locked ? 'Answers locked' : 'Live'}
               </span>

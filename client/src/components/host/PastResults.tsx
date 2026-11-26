@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
-import { ArrowLeft, ChevronDown, ChevronRight, Loader2, RefreshCw, Trophy } from 'lucide-react'
+import { ArrowLeft, ChevronDown, ChevronRight, RefreshCw, Trophy } from 'lucide-react'
 import { ErrorBanner } from '../ErrorBanner'
+import { Skeleton, Spinner } from '../Loading'
 import {
   describeApiError,
   fetchQuizzes,
@@ -138,9 +139,20 @@ export function PastResults({ token }: { token: string }) {
         </button>
 
         {detailLoading ? (
-          <div className="card mt-4 flex items-center justify-center gap-2 px-5 py-16 text-sm text-ink-2">
-            <Loader2 className="size-4 animate-spin" />
-            Loading the full leaderboard…
+          <div role="status" aria-live="polite" className="mt-4">
+            <p className="inline-flex items-center gap-2 text-sm font-semibold text-ink-2">
+              <Spinner className="size-4 text-cobalt" />
+              Loading the full leaderboard…
+            </p>
+            <div className="card mt-3 divide-y divide-line overflow-hidden">
+              {[0, 1, 2, 3, 4].map((row) => (
+                <div key={row} className="flex items-center gap-3 px-4 py-3">
+                  <Skeleton className="size-6 rounded" />
+                  <Skeleton className="h-4 flex-1" />
+                  <Skeleton className="h-3 w-10" />
+                </div>
+              ))}
+            </div>
           </div>
         ) : detailError ? (
           <div className="mt-4">
@@ -286,9 +298,24 @@ export function PastResults({ token }: { token: string }) {
       </div>
 
       {loading && sessions.length === 0 ? (
-        <div className="card flex items-center justify-center gap-2 px-5 py-12 text-sm text-ink-2">
-          <Loader2 className="size-4 animate-spin" />
-          Loading past games…
+        <div role="status" aria-live="polite" className="card mt-4 divide-y divide-line overflow-hidden">
+          <span className="sr-only">Loading past games…</span>
+          {[0, 1, 2, 3].map((row) => (
+            <div
+              key={row}
+              className="grid gap-3 px-4 py-3.5 sm:grid-cols-[1fr_9rem_6rem_8rem] sm:items-center"
+            >
+              <div className="min-w-0">
+                <Skeleton className="h-4 w-40 max-w-full" />
+                <Skeleton className="mt-1.5 h-3 w-20" />
+              </div>
+              <Skeleton className="h-3 w-28" />
+              <Skeleton className="h-3 w-16" />
+              <div className="sm:text-right">
+                <Skeleton className="h-9 w-28 sm:ml-auto" />
+              </div>
+            </div>
+          ))}
         </div>
       ) : sessions.length === 0 ? (
         <div className="card px-6 py-12 text-center">
