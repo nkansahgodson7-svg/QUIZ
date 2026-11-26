@@ -580,10 +580,13 @@ function eligibleCount(room) {
 }
 
 function questionPayload(room, player = null) {
-  return {
+  const payload = {
     ...room.question,
     myChoiceIndex: player ? (room.answers.get(player.id)?.choiceIndex ?? null) : null,
   }
+  // The correct option is private to the host monitor.
+  if (!player) payload.correctIndex = room.quiz.questions[room.question.index].correctIndex
+  return payload
 }
 
 function emitQuestionToEveryone(room) {
@@ -605,6 +608,49 @@ function emitAnswerCount(room) {
   })
 }
 
+function liveStatePayload(room) {
+  if (!room.question) return null
+  const players = [...room.players.values()].filter((player) => eligible(room, player))
+  const choiceCounts = room.question.options.map(() => 0)
+  for (const player of players) {
+    const answer = room.answers.get(player.id)
+    if (answer && choiceCounts[answer.choiceIndex] != null) {
+      choiceCounts[answer.choiceIndex] += 1
+    }
+  }
+  return {
+    index: room.question.index,
+    total: room.quiz.questions.length,
+    phase: room.phase === 'reveal' ? 'reveal' : 'question',
+    correctIndex: room.quiz.questions[room.question.index].correctIndex,
+    answered: room.answers.size,
+    eligible: players.length,
+    choiceCounts,
+    players: players.map((player) => ({
+      playerId: player.id,
+      nickname: player.nickname,
+      status:
+        !player.bot && !player.socketId
+          ? 'offline'
+          : room.answers.has(player.id)
+            ? 'answered'
+            : 'thinking',
+      choiceIndex: room.answers.get(player.id)?.choiceIndex ?? null,
+      totalScore: player.score,
+    })),
+  }
+}
+
+function emitLiveState(room) {
+  if (room.phase !== 'question' && room.phase !== 'reveal') return
+  const payload = liveStatePayload(room)
+  if (payload) emitToHosts(room, 'host:live_state', payload)
+}
+
+function emitStandings(room) {
+  emitToHosts(room, 'host:standings', { leaderboard: fullRows(room) })
+}
+
 function clearTimers(room) {
   for (const timer of room.timeouts) clearTimeout(timer)
   room.timeouts = []
@@ -620,6 +666,7 @@ function recordAnswer(room, player, choiceIndex, at) {
   if (!eligible(room, player)) return false
   room.answers.set(player.id, { choiceIndex, at })
   emitAnswerCount(room)
+  emitLiveState(room)
   return true
 }
 
@@ -649,6 +696,7 @@ function sendQuestion(room) {
 
   emitQuestionToEveryone(room)
   emitAnswerCount(room)
+  emitLiveState(room)
   log(`room ${room.code} question ${room.qIndex + 1}/${questions.length}`)
 
   for (const player of room.players.values()) {
@@ -703,6 +751,7 @@ function endQuestion(room) {
   room.correctIndex = q.correctIndex
   room.lastTop5 = topRows(rows)
   room.lastRows = rows
+  emitStandings(room)
 
   for (const player of room.players.values()) {
     player.lastResult = {
@@ -717,6 +766,7 @@ function endQuestion(room) {
     io.to(player.socketId).emit('question:result', player.lastResult)
   }
 
+  emitLiveState(room)
   log(`room ${room.code} reveal ${room.qIndex + 1}`, room.lastTop5.slice(0, 3))
   room.timeouts.push(setTimeout(() => advance(room), REVEAL_MS))
 }
@@ -747,6 +797,7 @@ function endGame(room) {
   }
 
   emitToHosts(room, 'game:ended', { leaderboard: fullRows(room) })
+  emitStandings(room)
 
   const endedAt = new Date().toISOString()
   const session = {
@@ -889,6 +940,35 @@ io.on('connection', (socket) => {
     sendQuestion(room)
   })
 
+  socket.on('host:end_question', (payload) => {
+    const hostId = requireHost(socket)
+    if (!hostId) return
+
+    const room = rooms.get(String(payload?.code ?? '').trim())
+    if (!room) return fail(socket, 'ROOM_NOT_FOUND', 'Room not found. Check the code.')
+    if (room.hostId !== hostId) {
+      return fail(socket, 'NOT_HOST', 'Authenticated host does not own that room.')
+    }
+    if (room.phase !== 'question') return
+
+    for (const timer of room.timeouts) clearTimeout(timer)
+    room.timeouts = []
+    endQuestion(room)
+  })
+
+  socket.on('host:end_game', (payload) => {
+    const hostId = requireHost(socket)
+    if (!hostId) return
+
+    const room = rooms.get(String(payload?.code ?? '').trim())
+    if (!room) return fail(socket, 'ROOM_NOT_FOUND', 'Room not found. Check the code.')
+    if (room.hostId !== hostId) {
+      return fail(socket, 'NOT_HOST', 'Authenticated host does not own that room.')
+    }
+    if (room.phase === 'lobby' || room.phase === 'ended') return
+    endGame(room)
+  })
+
   socket.on('player:join', (payload) => {
     const code = String(payload?.code ?? '').trim()
     const room = rooms.get(code)
@@ -949,6 +1029,7 @@ io.on('connection', (socket) => {
     })
     showLobby(room)
     sendStateTo(socket, room, player)
+    emitLiveState(room)
     log(`room ${code} rejoin`, player.nickname, room.phase)
   })
 
@@ -999,6 +1080,7 @@ io.on('connection', (socket) => {
           showLobby(room)
         } else {
           player.socketId = null
+          emitLiveState(room)
         }
         log('player left', room.code, player.nickname)
       }

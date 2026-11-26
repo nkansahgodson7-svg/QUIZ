@@ -13,6 +13,8 @@ export interface GameQuestion {
   durationMs: number
   /** Latest server-received answer for this question; always null for hosts. */
   myChoiceIndex: number | null
+  /** Host-only: the correct option. Never sent to players. */
+  correctIndex?: number | null
 }
 
 export interface JoinedPayload {
@@ -47,6 +49,33 @@ export interface AnswerCount {
   total: number
 }
 
+export type HostPlayerStatus = 'answered' | 'thinking' | 'offline'
+
+export interface HostPlayerState {
+  playerId: string
+  nickname: string
+  status: HostPlayerStatus
+  choiceIndex: number | null
+  totalScore: number
+}
+
+/** Host-only snapshot of the live question: per-choice counts and player statuses. */
+export interface HostLiveState {
+  index: number
+  total: number
+  phase: 'question' | 'reveal'
+  correctIndex: number
+  answered: number
+  eligible: number
+  /** Answer count per option index. */
+  choiceCounts: number[]
+  players: HostPlayerState[]
+}
+
+export interface HostStandings {
+  leaderboard: LeaderboardEntry[]
+}
+
 export interface PlayerGameEnded {
   yourRank: number
   yourScore: number
@@ -70,6 +99,8 @@ export interface ServerToClientEvents {
   'lobby:update': (payload: LobbyUpdate) => void
   'game:question': (payload: GameQuestion) => void
   'game:answer_count': (payload: AnswerCount) => void
+  'host:live_state': (payload: HostLiveState) => void
+  'host:standings': (payload: HostStandings) => void
   'question:result': (payload: PlayerResult) => void
   'game:ended': (payload: GameEndedPayload) => void
   error: (payload: GameError) => void
@@ -78,6 +109,8 @@ export interface ServerToClientEvents {
 export interface ClientToServerEvents {
   'host:create_room': (payload: { quizId: string }) => void
   'host:start': (payload: { code: string }) => void
+  'host:end_question': (payload: { code: string }) => void
+  'host:end_game': (payload: { code: string }) => void
   'player:join': (payload: { code: string; nickname: string }) => void
   'player:rejoin': (payload: { code: string; playerToken: string }) => void
   'player:answer': (payload: { code: string; questionIndex: number; choiceIndex: number }) => void

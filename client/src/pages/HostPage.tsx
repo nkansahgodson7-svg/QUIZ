@@ -11,15 +11,14 @@ import {
   WifiOff,
 } from 'lucide-react'
 import { AuthView, type AuthMode } from '../components/host/AuthView'
+import { LiveConsole } from '../components/host/LiveConsole'
 import { PastResults } from '../components/host/PastResults'
 import { QuizBuilder } from '../components/host/QuizBuilder'
 import { SavedQuizzes } from '../components/host/SavedQuizzes'
-import { ChoiceShape, choiceColor } from '../components/ChoiceShape'
 import { ConnectionPill, type ConnectionState } from '../components/ConnectionPill'
 import { ErrorBanner } from '../components/ErrorBanner'
 import { Leaderboard } from '../components/Leaderboard'
 import { Logo } from '../components/Logo'
-import { TimerBar } from '../components/Timer'
 import { useCountdown } from '../hooks/useCountdown'
 import {
   deleteQuiz,
@@ -36,6 +35,7 @@ import {
   type AnswerCount,
   type GameQuestion,
   type GameSocket,
+  type HostLiveState,
   type LeaderRow,
 } from '../lib/contract'
 import { clearHostToken, loadHostToken, saveHostToken } from '../lib/host-storage'
@@ -74,6 +74,9 @@ export function HostPage() {
   const [question, setQuestion] = useState<GameQuestion | null>(null)
   const [answered, setAnswered] = useState<AnswerCount | null>(null)
   const [leaderboard, setLeaderboard] = useState<LeaderRow[]>([])
+  const [liveState, setLiveState] = useState<HostLiveState | null>(null)
+  const [standings, setStandings] = useState<LeaderRow[]>([])
+  const [questionEnded, setQuestionEnded] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [copied, setCopied] = useState<'code' | 'link' | null>(null)
 
@@ -121,6 +124,9 @@ export function HostPage() {
       setQuestion(null)
       setAnswered(null)
       setLeaderboard([])
+      setLiveState(null)
+      setStandings([])
+      setQuestionEnded(false)
       setOpeningId(null)
       setError(null)
       setPhase('lobby')
@@ -129,12 +135,20 @@ export function HostPage() {
     socket.on('game:question', (payload) => {
       setQuestion(payload)
       setAnswered(null)
+      setLiveState(null)
+      setQuestionEnded(false)
       setPhase('live')
     })
     socket.on('game:answer_count', (payload) => setAnswered(payload))
+    socket.on('host:live_state', (payload) => {
+      setLiveState(payload)
+      setAnswered({ index: payload.index, answered: payload.answered, total: payload.eligible })
+    })
+    socket.on('host:standings', (payload) => setStandings(payload.leaderboard))
     socket.on('game:ended', (payload) => {
       if (!isHostGameEnded(payload)) return
       setLeaderboard(payload.leaderboard)
+      setStandings(payload.leaderboard)
       setPhase('ended')
     })
     socket.on('error', (payload) => {
@@ -221,6 +235,9 @@ export function HostPage() {
     setQuestion(null)
     setAnswered(null)
     setLeaderboard([])
+    setLiveState(null)
+    setStandings([])
+    setQuestionEnded(false)
     setQuizzes([])
     setQuizzesLoading(false)
     setBuilderOpen(false)
@@ -259,6 +276,18 @@ export function HostPage() {
     socketRef.current.emit('host:start', { code })
   }
 
+  function endQuestionNow() {
+    if (!socketRef.current || !code || questionEnded) return
+    setQuestionEnded(true)
+    socketRef.current.emit('host:end_question', { code })
+  }
+
+  function endGameNow() {
+    if (!socketRef.current || !code) return
+    if (!window.confirm('End the game now? Final standings will be saved.')) return
+    socketRef.current.emit('host:end_game', { code })
+  }
+
   function newRoom() {
     setPhase('idle')
     setCode('')
@@ -266,6 +295,9 @@ export function HostPage() {
     setQuestion(null)
     setAnswered(null)
     setLeaderboard([])
+    setLiveState(null)
+    setStandings([])
+    setQuestionEnded(false)
     setError(null)
     setOpeningId(null)
     setTab('quizzes')
@@ -340,14 +372,21 @@ export function HostPage() {
 
     if (phase === 'live' && question) {
       return (
-        <LiveView
+        <LiveConsole
+          code={code}
           question={question}
           answered={answered}
+          liveState={liveState}
+          standings={standings}
           playerCount={playerCount}
-          code={code}
           seconds={countdown.seconds}
           progress={countdown.progress}
-          ended={countdown.ended}
+          locked={questionEnded || countdown.ended}
+          copied={copied === 'code'}
+          online={connection === 'connected'}
+          onCopyCode={() => void copyText(code, 'code')}
+          onEndQuestion={endQuestionNow}
+          onEndGame={endGameNow}
         />
       )
     }
@@ -567,81 +606,6 @@ function LobbyView({
           <Play className="size-4" fill="currentColor" />
           Start game
         </button>
-      </div>
-    </div>
-  )
-}
-
-function LiveView({
-  question,
-  answered,
-  playerCount,
-  code,
-  seconds,
-  progress,
-  ended,
-}: {
-  question: GameQuestion
-  answered: AnswerCount | null
-  playerCount: number
-  code: string
-  seconds: number
-  progress: number
-  ended: boolean
-}) {
-  const answeredCount = answered?.index === question.index ? answered.answered : 0
-  const total = answered?.index === question.index ? answered.total : playerCount
-  const answeredPercent = total > 0 ? Math.min(100, (answeredCount / total) * 100) : 0
-
-  return (
-    <div className="mx-auto w-full max-w-4xl py-2 animate-rise">
-      <div className="flex flex-wrap items-center gap-2">
-        <span className="tile tabular-nums">
-          Question {question.index + 1} of {question.total}
-        </span>
-        <span className="tile tabular-nums">
-          {answeredCount} / {total} answered
-        </span>
-        <span className="tile tabular-nums">Room {code}</span>
-      </div>
-
-      <div className="card mt-4 p-5 sm:p-8">
-        <TimerBar seconds={seconds} progress={progress} size="lg" />
-
-        <div className="mt-3 h-2.5 overflow-hidden rounded-full border border-line bg-paper">
-          <div
-            className="h-full rounded-full bg-ink transition-[width] duration-300"
-            style={{ width: `${answeredPercent}%` }}
-          />
-        </div>
-
-        <h1 className="mt-6 text-4xl leading-tight font-extrabold tracking-tight text-balance sm:text-5xl">
-          {question.text}
-        </h1>
-
-        <div className="mt-6 grid gap-3 sm:grid-cols-2">
-          {question.options.map((option, index) => (
-            <div
-              key={index}
-              className="flex items-center gap-3 rounded-xl border border-line bg-paper px-4 py-4"
-            >
-              <span
-                className="grid size-10 shrink-0 place-items-center rounded-lg text-base font-extrabold text-white"
-                style={{ backgroundColor: choiceColor(index) }}
-              >
-                {String.fromCharCode(65 + index)}
-              </span>
-              <ChoiceShape index={index} className="size-5 shrink-0" />
-              <span className="text-lg font-semibold text-ink sm:text-xl">{option}</span>
-            </div>
-          ))}
-        </div>
-
-        <p className="mt-6 border-t border-line pt-4 text-sm font-semibold text-ink-2">
-          {ended
-            ? 'Answers are locked — results are landing on player phones.'
-            : 'Players can change their answer until the clock runs out.'}
-        </p>
       </div>
     </div>
   )
