@@ -15,6 +15,7 @@ import { ChoiceShape, choiceColor } from '../components/ChoiceShape'
 import { ConnectionPill, type ConnectionState } from '../components/ConnectionPill'
 import { ErrorBanner } from '../components/ErrorBanner'
 import { Leaderboard } from '../components/Leaderboard'
+import { PulseDot } from '../components/Loading'
 import { Logo } from '../components/Logo'
 import { TimerBar } from '../components/Timer'
 import { useCountdown } from '../hooks/useCountdown'
@@ -409,12 +410,20 @@ function JoinView({
             If someone beat you to it, the room adds a number.
           </p>
 
-          <button type="submit" disabled={!online} className="btn-primary mt-5 w-full py-3.5">
+          <button
+            type="submit"
+            disabled={!online}
+            aria-busy={!online}
+            className="btn-primary mt-5 w-full py-3.5"
+          >
             Join room
             <ArrowRight className="size-4" />
           </button>
           {!online && (
-            <p className="mt-2.5 text-center text-xs text-ink-3">Connecting to the game server…</p>
+            <p className="mt-2.5 flex items-center justify-center gap-2 text-center text-xs font-semibold text-ink-3">
+              <PulseDot className="size-1.5" tone="bg-warn" />
+              Connecting to the game server…
+            </p>
           )}
         </form>
       </div>
@@ -439,9 +448,12 @@ function JoiningView({
 }) {
   return (
     <div className="my-auto py-10 text-center animate-rise">
-      <span className="mx-auto grid size-12 place-items-center rounded-xl border border-line bg-card">
+      <span className="relative mx-auto grid size-12 place-items-center rounded-xl border border-line bg-card">
         {online ? (
-          <Loader2 className="size-5 animate-spin text-cobalt" />
+          <>
+            <span className="absolute inset-0 animate-ping rounded-xl border border-cobalt/40" />
+            <Loader2 className="size-5 animate-spin text-cobalt" />
+          </>
         ) : (
           <WifiOff className="size-5 text-wrong" />
         )}
@@ -469,8 +481,11 @@ function LobbyView({ nickname, code }: { nickname: string; code: string }) {
       <h1 className="mt-5 text-3xl font-extrabold tracking-tight break-words">{nickname}</h1>
       <p className="mt-1.5 text-sm font-semibold text-ink-2 tabular-nums">Room {code}</p>
 
-      <div className="card mt-6 px-5 py-6">
-        <p className="text-base font-bold text-ink">Waiting for the host to start</p>
+      <div className="card mt-6 px-4 py-6 sm:px-5">
+        <p className="inline-flex items-center gap-2 text-base font-bold text-ink">
+          <PulseDot className="size-2" />
+          Waiting for the host to start
+        </p>
         <p className="mt-1.5 text-sm leading-relaxed text-ink-2">
           Keep this screen open. The first question arrives with everyone else’s.
         </p>

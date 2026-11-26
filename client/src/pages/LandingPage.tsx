@@ -17,7 +17,7 @@ export function LandingPage() {
 
   return (
     <div className="flex min-h-svh flex-col">
-      <header className="mx-auto flex w-full max-w-5xl items-center justify-between px-5 py-5 sm:px-8">
+      <header className="mx-auto flex w-full max-w-5xl items-center justify-between gap-3 px-4 py-4 sm:px-8 sm:py-5">
         <Logo />
         <Link to="/host" className="btn-ghost px-3.5 py-2 text-sm">
           <LogIn className="size-4" />
@@ -25,15 +25,15 @@ export function LandingPage() {
         </Link>
       </header>
 
-      <main className="mx-auto flex w-full max-w-md flex-1 flex-col justify-center px-5 pb-16 sm:px-8">
-        <h1 className="text-5xl leading-[0.95] font-extrabold tracking-tight sm:text-6xl">
+      <main className="mx-auto flex w-full max-w-md flex-1 flex-col justify-center px-4 pb-[max(4rem,env(safe-area-inset-bottom))] sm:px-8">
+        <h1 className="text-4xl leading-[0.95] font-extrabold tracking-tight sm:text-6xl">
           Join a quiz.
         </h1>
         <p className="mt-3 text-base leading-relaxed text-ink-2">
           Type the six-digit code shown on the board.
         </p>
 
-        <form onSubmit={join} className="card-strong mt-7 p-5 sm:p-6">
+        <form onSubmit={join} className="card-strong mt-7 p-4 sm:p-6">
           <label htmlFor="join-code" className="text-sm font-bold text-ink">
             Room code
           </label>

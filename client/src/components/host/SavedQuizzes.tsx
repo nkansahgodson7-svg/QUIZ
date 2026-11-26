@@ -1,6 +1,7 @@
-import { ListChecks, Loader2, Pencil, Plus, Radio, Trash2 } from 'lucide-react'
+import { ListChecks, Pencil, Plus, Radio, Trash2 } from 'lucide-react'
 import type { Quiz } from '../../lib/api'
 import type { ConnectionState } from '../ConnectionPill'
+import { Skeleton, Spinner } from '../Loading'
 
 function formatUpdated(value?: string): string {
   if (!value) return 'just now'
@@ -39,10 +40,18 @@ export function SavedQuizzes({
     <section>
       <div className="flex flex-wrap items-center justify-between gap-3">
         <h2 className="text-xl font-extrabold tracking-tight">Saved quizzes</h2>
-        <button type="button" onClick={onCreate} className="btn-primary px-4 py-2.5">
-          <Plus className="size-4" />
-          New quiz
-        </button>
+        <div className="flex items-center gap-3">
+          {loading && quizzes.length > 0 && (
+            <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-ink-3">
+              <Spinner className="size-3" />
+              Refreshing…
+            </span>
+          )}
+          <button type="button" onClick={onCreate} className="btn-primary px-4 py-2.5">
+            <Plus className="size-4" />
+            New quiz
+          </button>
+        </div>
       </div>
 
       {connection !== 'connected' && (
@@ -52,9 +61,25 @@ export function SavedQuizzes({
       )}
 
       {loading && quizzes.length === 0 ? (
-        <div className="card mt-4 flex items-center justify-center gap-2 px-5 py-12 text-sm text-ink-2">
-          <Loader2 className="size-4 animate-spin" />
-          Loading your quizzes…
+        <div role="status" aria-live="polite" className="mt-4 flex flex-col gap-3">
+          <span className="sr-only">Loading your quizzes…</span>
+          {[0, 1, 2].map((row) => (
+            <div key={row} className="card p-4 sm:p-5">
+              <div className="flex flex-wrap items-center justify-between gap-4">
+                <div className="min-w-0 flex-1">
+                  <Skeleton className="h-5 w-2/3 max-w-56" />
+                  <Skeleton className="mt-2 h-3 w-40 max-w-full" />
+                </div>
+                <div className="flex items-center gap-2">
+                  <Skeleton className="h-10 w-28" />
+                  <Skeleton className="h-10 w-20" />
+                  <span className="hidden sm:block">
+                    <Skeleton className="h-10 w-24" />
+                  </span>
+                </div>
+              </div>
+            </div>
+          ))}
         </div>
       ) : quizzes.length === 0 ? (
         <div className="card mt-4 px-6 py-12 text-center">
@@ -99,11 +124,7 @@ export function SavedQuizzes({
                           : 'Waiting for the host connection'
                       }
                     >
-                      {opening ? (
-                        <Loader2 className="size-4 animate-spin" />
-                      ) : (
-                        <Radio className="size-4" />
-                      )}
+                      {opening ? <Spinner className="size-4" /> : <Radio className="size-4" />}
                       {opening ? 'Opening…' : 'Open room'}
                     </button>
                     <button
@@ -121,11 +142,7 @@ export function SavedQuizzes({
                       disabled={busy}
                       className="btn-ghost px-3.5 py-2.5 text-wrong hover:border-wrong"
                     >
-                      {deleting ? (
-                        <Loader2 className="size-4 animate-spin" />
-                      ) : (
-                        <Trash2 className="size-4" />
-                      )}
+                      {deleting ? <Spinner className="size-4" /> : <Trash2 className="size-4" />}
                       {deleting ? 'Deleting…' : 'Delete'}
                     </button>
                   </div>
