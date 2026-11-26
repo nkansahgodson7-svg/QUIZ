@@ -447,6 +447,260 @@ test('game flow: join, start, answer changes, scoring, auto-advance, saved sessi
   closeSockets(hostSocket, playerOne.socket, playerTwo.socket);
 });
 
+test('host monitor: live state, standings, early finish controls, hidden answer key', { timeout: 30_000 }, async () => {
+  const host = await signupHost('monitor');
+  const quiz = await createQuiz(host.token, [
+    {
+      type: 'multiple_choice',
+      text: 'Question one',
+      options: ['A', 'B', 'C', 'D'],
+      correctIndex: 1,
+      durationSec: 30,
+    },
+    {
+      type: 'multiple_choice',
+      text: 'Question two',
+      options: ['A', 'B', 'C', 'D'],
+      correctIndex: 2,
+      durationSec: 30,
+    },
+  ]);
+
+  const hostRoom = await createHostRoom(host.token, quiz.id);
+  const hostSocket = hostRoom.socket;
+  const hostInbox = hostRoom.inbox;
+  const code = hostRoom.code;
+
+  const playerOne = await joinPlayer(code, 'Ama');
+  const playerTwo = await joinPlayer(code, 'Kwame');
+  const playerOneEvents = [];
+  const playerTwoEvents = [];
+  playerOne.socket.onAny((event, payload) => playerOneEvents.push({ event, payload }));
+  playerTwo.socket.onAny((event, payload) => playerTwoEvents.push({ event, payload }));
+
+  hostSocket.emit('host:start', { code });
+
+  const [hostQ1, p1Q1, p2Q1] = await Promise.all([
+    hostInbox.take('game:question', { predicate: (payload) => payload.index === 0 }),
+    playerOne.inbox.take('game:question', { predicate: (payload) => payload.index === 0 }),
+    playerTwo.inbox.take('game:question', { predicate: (payload) => payload.index === 0 }),
+  ]);
+  assert.equal(hostQ1.correctIndex, 1);
+  for (const question of [p1Q1, p2Q1]) {
+    assert.equal('correctIndex' in question, false);
+    assert.equal('choiceCounts' in question, false);
+  }
+
+  const initialLive = await hostInbox.take('game:answer_count', {
+    predicate: (state) => state.index === 0 && state.answered === 0 && state.players.length === 2,
+  });
+  assert.equal(initialLive.total, 2);
+  assert.deepEqual(initialLive.choiceCounts, [0, 0, 0, 0]);
+  assert.deepEqual(
+    initialLive.players.find((player) => player.playerId === playerOne.joined.playerId),
+    {
+      playerId: playerOne.joined.playerId,
+      nickname: 'Ama',
+      answered: false,
+      choiceIndex: null,
+      connected: true,
+    },
+  );
+
+  playerOne.socket.emit('player:answer', { code, questionIndex: 0, choiceIndex: 1 });
+  const liveAfterP1 = await hostInbox.take('game:answer_count', {
+    predicate: (state) => state.index === 0 && state.answered === 1,
+  });
+  assert.deepEqual(liveAfterP1.choiceCounts, [0, 1, 0, 0]);
+  assert.equal(
+    liveAfterP1.players.find((player) => player.playerId === playerOne.joined.playerId).choiceIndex,
+    1,
+  );
+
+  playerTwo.socket.emit('player:answer', { code, questionIndex: 0, choiceIndex: 3 });
+  const liveAfterP2 = await hostInbox.take('game:answer_count', {
+    predicate: (state) => state.index === 0 && state.answered === 2,
+  });
+  assert.deepEqual(liveAfterP2.choiceCounts, [0, 1, 0, 1]);
+
+  playerOne.socket.emit('player:answer', { code, questionIndex: 0, choiceIndex: 0 });
+  const liveAfterChange = await hostInbox.take('game:answer_count', {
+    predicate: (state) => state.index === 0 && state.choiceCounts[0] === 1,
+  });
+  assert.equal(liveAfterChange.answered, 2);
+  assert.deepEqual(liveAfterChange.choiceCounts, [1, 0, 0, 1]);
+
+  playerOne.socket.emit('player:answer', { code, questionIndex: 0, choiceIndex: 1 });
+  await hostInbox.take('game:answer_count', {
+    predicate: (state) => (
+      state.index === 0
+      && state.answered === 2
+      && state.choiceCounts[0] === 0
+      && state.choiceCounts[1] === 1
+    ),
+  });
+
+  const late = await joinPlayer(code, 'Late');
+  const lateQuestion = await late.inbox.take('game:question', {
+    predicate: (payload) => payload.index === 0,
+  });
+  assert.equal('correctIndex' in lateQuestion, false);
+  assert.equal(lateQuestion.myChoiceIndex, null);
+
+  const liveAfterJoin = await hostInbox.take('game:answer_count', {
+    predicate: (state) => state.index === 0 && state.players.length === 3,
+  });
+  assert.equal(liveAfterJoin.answered, 2);
+  assert.equal(liveAfterJoin.total, 2);
+  assert.equal(
+    liveAfterJoin.players.find((player) => player.playerId === late.joined.playerId).connected,
+    true,
+  );
+
+  late.socket.disconnect();
+  const liveAfterDisconnect = await hostInbox.take('game:answer_count', {
+    predicate: (state) => (
+      state.index === 0
+      && state.players.some(
+        (player) => player.playerId === late.joined.playerId && !player.connected,
+      )
+    ),
+  });
+  assert.equal(liveAfterDisconnect.answered, 2);
+
+  hostSocket.emit('host:end_question', { code });
+  const [hostStandings, p1R1, p2R1] = await Promise.all([
+    hostInbox.take('host:standings', { predicate: (standings) => standings.index === 0 }),
+    playerOne.inbox.take('question:result', { predicate: (result) => result.index === 0 }),
+    playerTwo.inbox.take('question:result', { predicate: (result) => result.index === 0 }),
+  ]);
+  assert.equal(hostStandings.leaderboard.length, 3);
+  assert.equal(hostStandings.leaderboard[0].playerId, playerOne.joined.playerId);
+  assert.equal(p1R1.points > 0, true);
+  assert.equal(p2R1.points, 0);
+  assert.equal(p1R1.rank, 1);
+  assert.equal(p2R1.rank, 2);
+
+  const [hostQ2, p1Q2, p2Q2] = await Promise.all([
+    hostInbox.take('game:question', { predicate: (payload) => payload.index === 1 }),
+    playerOne.inbox.take('game:question', { predicate: (payload) => payload.index === 1 }),
+    playerTwo.inbox.take('game:question', { predicate: (payload) => payload.index === 1 }),
+  ]);
+  assert.equal(hostQ2.correctIndex, 2);
+  for (const question of [p1Q2, p2Q2]) {
+    assert.equal('correctIndex' in question, false);
+    assert.equal('choiceCounts' in question, false);
+  }
+
+  const liveQ2 = await hostInbox.take('game:answer_count', {
+    predicate: (state) => state.index === 1 && state.answered === 0,
+  });
+  assert.equal(liveQ2.total, 3);
+
+  hostSocket.emit('host:end_game', { code });
+  const [hostEnded, p1Ended, p2Ended] = await Promise.all([
+    hostInbox.take('game:ended'),
+    playerOne.inbox.take('game:ended'),
+    playerTwo.inbox.take('game:ended'),
+  ]);
+  assert.equal(hostEnded.leaderboard.length, 3);
+  assert.equal(p1Ended.yourRank, 1);
+  assert.equal(p1Ended.yourScore, p1R1.totalScore);
+  assert.equal(p2Ended.yourRank, 2);
+  assert.equal(p2Ended.yourScore, p2R1.totalScore);
+
+  const saved = await waitForSession(host.token, code);
+  assert.equal(saved.players.length, 3);
+  assert.equal(saved.players.find((player) => player.nickname === 'Late').totalScore, 0);
+
+  for (const [label, events] of [
+    ['player one', playerOneEvents],
+    ['player two', playerTwoEvents],
+  ]) {
+    assert.equal(
+      events.some((entry) => entry.event === 'host:standings'),
+      false,
+      `${label} must not receive host standings`,
+    );
+    assert.equal(
+      events.some((entry) => entry.event === 'game:answer_count'),
+      false,
+      `${label} must not receive host live state`,
+    );
+    for (const entry of events) {
+      if (entry.payload && typeof entry.payload === 'object') {
+        assert.equal(
+          'choiceCounts' in entry.payload,
+          false,
+          `${label} must not receive choiceCounts on ${entry.event}`,
+        );
+      }
+      if (entry.event === 'game:question') {
+        assert.equal(
+          'correctIndex' in entry.payload,
+          false,
+          `${label} must not receive the answer key before the reveal`,
+        );
+      }
+    }
+  }
+
+  closeSockets(hostSocket, playerOne.socket, playerTwo.socket);
+});
+
+test('host pacing controls are rejected for non-hosts', { timeout: 15_000 }, async () => {
+  const hostA = await signupHost('controls-a');
+  const hostB = await signupHost('controls-b');
+  const quiz = await createQuiz(hostA.token, [
+    {
+      type: 'true_false',
+      text: 'Only the host can pace this.',
+      options: ['True', 'False'],
+      correctIndex: 0,
+      durationSec: 10,
+    },
+  ]);
+
+  const room = await createHostRoom(hostA.token, quiz.id);
+  const player = await joinPlayer(room.code, 'Player');
+
+  const otherHost = await connectSocket(hostB.token);
+  const otherInbox = makeInbox(otherHost);
+
+  otherHost.emit('host:end_question', { code: room.code });
+  const wrongHostEndQuestion = await otherInbox.take('error');
+  assert.equal(wrongHostEndQuestion.code, 'NOT_HOST');
+
+  otherHost.emit('host:end_game', { code: room.code });
+  const wrongHostEndGame = await otherInbox.take('error');
+  assert.equal(wrongHostEndGame.code, 'NOT_HOST');
+
+  player.socket.emit('host:end_question', { code: room.code });
+  const playerEndQuestion = await player.inbox.take('error');
+  assert.equal(playerEndQuestion.code, 'AUTH_REQUIRED');
+
+  player.socket.emit('host:end_game', { code: room.code });
+  const playerEndGame = await player.inbox.take('error');
+  assert.equal(playerEndGame.code, 'AUTH_REQUIRED');
+
+  // The rejected controls must not disturb the room for the real host.
+  room.socket.emit('host:start', { code: room.code });
+  const question = await player.inbox.take('game:question', {
+    predicate: (payload) => payload.index === 0,
+  });
+  assert.equal('correctIndex' in question, false);
+
+  room.socket.emit('host:end_game', { code: room.code });
+  const [hostEnded, playerEnded] = await Promise.all([
+    room.inbox.take('game:ended'),
+    player.inbox.take('game:ended'),
+  ]);
+  assert.equal(hostEnded.leaderboard.length, 1);
+  assert.equal(playerEnded.yourRank, 1);
+
+  closeSockets(otherHost, player.socket, room.socket);
+});
+
 test('rejoin keeps score; late joiner starts scoring on the next question', { timeout: 30_000 }, async () => {
   const host = await signupHost('rejoin');
   const quiz = await createQuiz(host.token, [

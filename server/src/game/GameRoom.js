@@ -167,6 +167,30 @@ export class GameRoom {
     this._startCurrentQuestion();
   }
 
+  endQuestion() {
+    if (this.state === 'ended') {
+      throw new GameError('GAME_ENDED', 'That game has already ended.');
+    }
+    if (this.state !== 'question' || !this.currentQuestion) {
+      throw new GameError('QUESTION_NOT_ACTIVE', 'There is no active question to end.');
+    }
+
+    if (this.questionTimer) clearTimeout(this.questionTimer);
+    this.questionTimer = null;
+    this._endQuestion(this.currentIndex);
+  }
+
+  endGame() {
+    if (this.state === 'ended') {
+      throw new GameError('GAME_ENDED', 'That game has already ended.');
+    }
+    if (this.state === 'lobby') {
+      throw new GameError('GAME_NOT_STARTED', 'That game has not started yet.');
+    }
+
+    this._endGame();
+  }
+
   recordAnswer({ playerId, questionIndex, choiceIndex }) {
     const player = this.players.get(playerId);
     if (!player) {
@@ -201,7 +225,7 @@ export class GameRoom {
       choiceIndex,
       receivedAt: now,
     });
-    this._emitAnswerCount();
+    this.emitLiveState();
     return { accepted: true };
   }
 
@@ -221,13 +245,39 @@ export class GameRoom {
     };
   }
 
-  _emitAnswerCount() {
-    if (!this.currentQuestion) return;
-    this.emitToHost(SERVER_EVENTS.GAME_ANSWER_COUNT, {
+  liveState() {
+    if (!this.currentQuestion) return null;
+
+    const question = this.quiz.questions[this.currentIndex];
+    const choiceCounts = new Array(question.options.length).fill(0);
+    for (const answer of this.currentQuestion.answers.values()) {
+      if (answer.choiceIndex >= 0 && answer.choiceIndex < choiceCounts.length) {
+        choiceCounts[answer.choiceIndex] += 1;
+      }
+    }
+
+    return {
       index: this.currentIndex,
       answered: this.currentQuestion.answers.size,
       total: this.currentQuestion.eligibleCount,
-    });
+      choiceCounts,
+      players: Array.from(this.players.values(), (player) => {
+        const answer = this.currentQuestion.answers.get(player.id) || null;
+        return {
+          playerId: player.id,
+          nickname: player.nickname,
+          answered: Boolean(answer),
+          choiceIndex: answer ? answer.choiceIndex : null,
+          connected: player.connected,
+        };
+      }),
+    };
+  }
+
+  emitLiveState() {
+    const state = this.liveState();
+    if (!state) return;
+    this.emitToHost(SERVER_EVENTS.GAME_ANSWER_COUNT, state);
   }
 
   _startCurrentQuestion() {
@@ -267,7 +317,11 @@ export class GameRoom {
       durationMs,
     };
 
-    this.emitToHost(SERVER_EVENTS.GAME_QUESTION, { ...basePayload, myChoiceIndex: null });
+    this.emitToHost(SERVER_EVENTS.GAME_QUESTION, {
+      ...basePayload,
+      correctIndex: question.correctIndex,
+      myChoiceIndex: null,
+    });
     for (const player of this.players.values()) {
       if (!player.socketId) continue;
       this.io.sockets.sockets.get(player.socketId)?.emit(SERVER_EVENTS.GAME_QUESTION, {
@@ -276,7 +330,7 @@ export class GameRoom {
       });
     }
 
-    this._emitAnswerCount();
+    this.emitLiveState();
 
     this.questionTimer = setTimeout(() => {
       this._endQuestion(this.currentIndex);
@@ -341,6 +395,8 @@ export class GameRoom {
       }
     }
 
+    this.emitToHost(SERVER_EVENTS.HOST_STANDINGS, { index, leaderboard });
+
     this.revealTimer = setTimeout(() => {
       this._advance();
     }, this.revealMs);
@@ -363,6 +419,8 @@ export class GameRoom {
   _endGame() {
     if (this.state === 'ended') return;
 
+    if (this.questionTimer) clearTimeout(this.questionTimer);
+    if (this.revealTimer) clearTimeout(this.revealTimer);
     this.questionTimer = null;
     this.revealTimer = null;
     this.state = 'ended';
