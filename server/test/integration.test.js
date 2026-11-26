@@ -626,3 +626,96 @@ test('socket errors: auth, ownership, missing room', { timeout: 15_000 }, async 
 
   closeSockets(noAuth, hostBRoom, hostARoom.socket, stranger);
 });
+
+test('socket errors: invalid nickname on player:join emits INVALID_NICKNAME', { timeout: 15_000 }, async () => {
+  const host = await signupHost('bad-nickname');
+  const quiz = await createQuiz(host.token, [
+    {
+      type: 'true_false',
+      text: 'Nicknames are required.',
+      options: ['True', 'False'],
+      correctIndex: 0,
+      durationSec: 10,
+    },
+  ]);
+  const room = await createHostRoom(host.token, quiz.id);
+  const socket = await connectSocket();
+  const inbox = makeInbox(socket);
+
+  // GameRoom.addPlayer throws synchronously for a blank nickname.
+  socket.emit('player:join', { code: room.code, nickname: '   ' });
+  const error = await inbox.take('error');
+  assert.equal(error.code, 'INVALID_NICKNAME');
+
+  // The synchronous throw must not take down the process: the same socket can
+  // still join with a valid nickname.
+  const joinedPromise = inbox.take('player:joined');
+  socket.emit('player:join', { code: room.code, nickname: 'Valid' });
+  const joined = await joinedPromise;
+  assert.equal(joined.nickname, 'Valid');
+
+  closeSockets(socket, room.socket);
+});
+
+test('socket errors: joining an ended game emits GAME_ENDED', { timeout: 20_000 }, async () => {
+  const host = await signupHost('ended-join');
+  const quiz = await createQuiz(host.token, [
+    {
+      type: 'true_false',
+      text: 'This game ends quickly.',
+      options: ['True', 'False'],
+      correctIndex: 0,
+      durationSec: 1,
+    },
+  ]);
+  const room = await createHostRoom(host.token, quiz.id);
+
+  room.socket.emit('host:start', { code: room.code });
+  await room.inbox.take('game:ended', { timeoutMs: 5000 });
+
+  // GameRoom.addPlayer throws synchronously once the game has ended.
+  const late = await connectSocket();
+  const lateInbox = makeInbox(late);
+  late.emit('player:join', { code: room.code, nickname: 'Too late' });
+  const error = await lateInbox.take('error');
+  assert.equal(error.code, 'GAME_ENDED');
+
+  // The synchronous throw must not take down the process: the host can still
+  // create another room.
+  const createdPromise = room.inbox.take('room:created');
+  room.socket.emit('host:create_room', { quizId: quiz.id });
+  const created = await createdPromise;
+  assert.match(created.code, /^\d{6}$/);
+
+  closeSockets(late, room.socket);
+});
+
+test('socket errors: rejoin with a bad player token emits INVALID_PLAYER_TOKEN', { timeout: 15_000 }, async () => {
+  const host = await signupHost('bad-token');
+  const quiz = await createQuiz(host.token, [
+    {
+      type: 'true_false',
+      text: 'Tokens are required.',
+      options: ['True', 'False'],
+      correctIndex: 0,
+      durationSec: 10,
+    },
+  ]);
+  const room = await createHostRoom(host.token, quiz.id);
+  const socket = await connectSocket();
+  const inbox = makeInbox(socket);
+
+  // GameRoom.rejoinPlayer throws synchronously for an unknown token.
+  socket.emit('player:rejoin', { code: room.code, playerToken: 'not-a-real-token' });
+  const error = await inbox.take('error');
+  assert.equal(error.code, 'INVALID_PLAYER_TOKEN');
+
+  // The synchronous throw must not take down the process: the socket can still
+  // join as a new player.
+  const joinedPromise = inbox.take('player:joined');
+  socket.emit('player:join', { code: room.code, nickname: 'Recovered' });
+  const joined = await joinedPromise;
+  assert.equal(joined.nickname, 'Recovered');
+
+  closeSockets(socket, room.socket);
+});

@@ -18,8 +18,12 @@ function handleError(socket, error) {
 }
 
 function safeHandler(socket, handler) {
-  return function wrapped(...args) {
-    Promise.resolve(handler(...args)).catch((error) => handleError(socket, error));
+  return async function wrapped(...args) {
+    try {
+      await handler(...args);
+    } catch (error) {
+      handleError(socket, error);
+    }
   };
 }
 
