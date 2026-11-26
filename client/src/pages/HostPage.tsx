@@ -1,7 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { Link } from 'react-router-dom'
 import {
-  ArrowLeft,
   Check,
   Copy,
   ListChecks,
@@ -10,14 +8,13 @@ import {
   Play,
   RotateCcw,
   Trophy,
-  Users,
   WifiOff,
 } from 'lucide-react'
 import { AuthView, type AuthMode } from '../components/host/AuthView'
 import { PastResults } from '../components/host/PastResults'
 import { QuizBuilder } from '../components/host/QuizBuilder'
 import { SavedQuizzes } from '../components/host/SavedQuizzes'
-import { Backdrop } from '../components/Backdrop'
+import { ChoiceShape, choiceColor } from '../components/ChoiceShape'
 import { ConnectionPill, type ConnectionState } from '../components/ConnectionPill'
 import { ErrorBanner } from '../components/ErrorBanner'
 import { Leaderboard } from '../components/Leaderboard'
@@ -47,13 +44,6 @@ import { createSocket } from '../lib/socket'
 type AuthStatus = 'checking' | 'anonymous' | 'authenticated'
 type HostPhase = 'idle' | 'lobby' | 'live' | 'ended'
 type DashboardTab = 'quizzes' | 'results'
-
-const OPTION_ACCENTS = [
-  'bg-iris-500 text-white',
-  'bg-aqua-400 text-night-950',
-  'bg-coral-400 text-night-950',
-  'bg-acid-400 text-night-950',
-]
 
 export function HostPage() {
   const socketRef = useRef<GameSocket | null>(null)
@@ -379,45 +369,39 @@ export function HostPage() {
     }
 
     return (
-      <div className="mx-auto w-full max-w-4xl py-6 animate-rise">
+      <div className="animate-rise">
         <div className="flex flex-wrap items-end justify-between gap-4">
           <div>
-            <p className="eyebrow">Host console</p>
-            <h1 className="mt-2 text-4xl font-bold tracking-tight sm:text-5xl">Run the room.</h1>
-            <p className="mt-3 max-w-xl text-sm leading-relaxed text-mist-400">
-              Build a quiz, open a room, and share the code. Questions advance on their own once
-              you start.
+            <h1 className="text-3xl font-extrabold tracking-tight sm:text-4xl">Your quizzes</h1>
+            <p className="mt-1 text-sm text-ink-2">
+              Open a room, edit a quiz, or check how the last game went.
             </p>
           </div>
-          <div className="flex items-center gap-1 rounded-2xl border border-white/10 bg-white/[0.03] p-1">
+          <div className="flex rounded-xl border border-line bg-card p-1">
             <button
               type="button"
               onClick={() => setTab('quizzes')}
-              className={`inline-flex items-center gap-2 rounded-xl px-3.5 py-2 text-sm font-semibold transition-colors ${
-                tab === 'quizzes'
-                  ? 'bg-acid-400 text-night-950'
-                  : 'text-mist-400 hover:text-mist-200'
+              className={`inline-flex items-center gap-2 rounded-lg px-3 py-2 text-sm font-bold transition-colors ${
+                tab === 'quizzes' ? 'bg-ink text-paper' : 'text-ink-2 hover:text-ink'
               }`}
             >
               <ListChecks className="size-4" />
-              Saved quizzes
+              Quizzes
             </button>
             <button
               type="button"
               onClick={() => setTab('results')}
-              className={`inline-flex items-center gap-2 rounded-xl px-3.5 py-2 text-sm font-semibold transition-colors ${
-                tab === 'results'
-                  ? 'bg-acid-400 text-night-950'
-                  : 'text-mist-400 hover:text-mist-200'
+              className={`inline-flex items-center gap-2 rounded-lg px-3 py-2 text-sm font-bold transition-colors ${
+                tab === 'results' ? 'bg-ink text-paper' : 'text-ink-2 hover:text-ink'
               }`}
             >
               <Trophy className="size-4" />
-              Past results
+              Past Results
             </button>
           </div>
         </div>
 
-        <div className="mt-8">
+        <div className="mt-6">
           {tab === 'quizzes' ? (
             <SavedQuizzes
               quizzes={quizzes}
@@ -439,79 +423,61 @@ export function HostPage() {
   }
 
   return (
-    <div className="relative flex min-h-svh flex-col">
-      <Backdrop />
-      <header className="mx-auto flex w-full max-w-6xl items-center justify-between px-5 py-5 sm:px-8">
-        <div className="flex items-center gap-3">
-          <Logo />
-          <span className="hidden rounded-full border border-white/10 bg-white/[0.04] px-2.5 py-1 text-[0.65rem] font-semibold tracking-[0.14em] text-mist-400 uppercase sm:inline">
-            Host
-          </span>
-        </div>
-        <div className="flex items-center gap-2.5">
-          {code && phase !== 'idle' && (
-            <span className="hidden rounded-full border border-white/10 bg-white/[0.04] px-3 py-1.5 text-xs font-medium text-mist-300 tabular-nums sm:inline">
-              Room {code}
+    <div className="flex min-h-svh flex-col">
+      <header className="border-b border-line bg-paper">
+        <div className="mx-auto flex w-full max-w-6xl items-center justify-between gap-3 px-5 py-3 sm:px-8">
+          <div className="flex items-center gap-2.5">
+            <Logo />
+            <span className="hidden rounded-md border border-line bg-card px-2 py-1 text-xs font-bold text-ink-2 sm:inline">
+              Host
             </span>
-          )}
+            {code && phase !== 'idle' && (
+              <span className="hidden rounded-md border border-line bg-card px-2 py-1 text-xs font-bold text-ink-2 tabular-nums sm:inline">
+                Room {code}
+              </span>
+            )}
+          </div>
           {authStatus === 'authenticated' && (
-            <>
+            <div className="flex items-center gap-2">
               {host && (
-                <span className="hidden max-w-[15rem] truncate text-xs text-mist-500 lg:inline">
+                <span className="hidden max-w-[14rem] truncate text-xs text-ink-3 lg:inline">
                   {host.email}
                 </span>
               )}
               <ConnectionPill state={connection} />
-              <button
-                type="button"
-                onClick={handleLogout}
-                className="btn-ghost px-3 py-2 text-sm"
-              >
+              <button type="button" onClick={handleLogout} className="btn-quiet px-2.5 py-2 text-sm">
                 <LogOut className="size-4" />
                 <span className="hidden sm:inline">Log out</span>
               </button>
-            </>
+            </div>
           )}
         </div>
       </header>
 
-      <main className="mx-auto flex w-full max-w-6xl flex-1 flex-col px-5 pb-10 sm:px-8">
+      <main className="mx-auto w-full max-w-6xl flex-1 px-5 py-6 sm:px-8">
         {authStatus === 'authenticated' && (
-          <div className="mx-auto w-full max-w-4xl">
+          <>
             <ErrorBanner message={error} onDismiss={() => setError(null)} />
             {connection === 'offline' && phase !== 'idle' && (
-              <div className="mb-5 flex items-center gap-3 rounded-2xl border border-[#ffd08a]/25 bg-[#ffd08a]/10 px-4 py-3 text-sm text-[#ffe1b0]">
+              <div className="mb-4 flex items-center gap-2.5 rounded-xl border border-warn/25 bg-warn-soft px-3 py-2.5 text-sm font-semibold text-warn">
                 <WifiOff className="size-4 shrink-0" />
                 Connection lost — reconnecting. The game keeps running on the server.
               </div>
             )}
-          </div>
+          </>
         )}
 
         {renderContent()}
       </main>
-
-      <footer className="mx-auto flex w-full max-w-6xl items-center justify-between gap-3 border-t border-white/8 px-5 py-4 text-xs text-mist-500 sm:px-8">
-        <Link to="/" className="inline-flex items-center gap-1.5 transition-colors hover:text-mist-300">
-          <ArrowLeft className="size-3.5" />
-          Back to home
-        </Link>
-        <span>Host console · the host never plays</span>
-      </footer>
     </div>
   )
 }
 
 function CheckingView() {
   return (
-    <div className="my-auto py-20 text-center animate-rise">
-      <div className="relative mx-auto grid size-16 place-items-center">
-        <span className="absolute inset-0 rounded-full bg-acid-400/15 blur-xl" />
-        <span className="grid size-16 place-items-center rounded-full border border-white/10 bg-night-850">
-          <Loader2 className="size-6 animate-spin text-acid-300" />
-        </span>
-      </div>
-      <p className="mt-5 text-sm text-mist-400">Checking your host session…</p>
+    <div className="my-auto py-20 text-center">
+      <Loader2 className="mx-auto size-5 animate-spin text-ink-3" />
+      <p className="mt-3 text-sm text-ink-2">Checking your host session…</p>
     </div>
   )
 }
@@ -536,89 +502,71 @@ function LobbyView({
   const digits = code.padStart(6, '0').split('')
 
   return (
-    <div className="mx-auto my-auto w-full max-w-2xl py-6 animate-rise">
-      <div className="text-center">
-        <p className="eyebrow">Room code</p>
-        <div className="mt-3 flex justify-center gap-1.5 sm:gap-2.5">
+    <div className="mx-auto my-auto w-full max-w-3xl py-4 animate-rise">
+      <p className="text-sm font-bold text-ink-2">Room code</p>
+
+      <div className="mt-2 flex flex-wrap items-center gap-4">
+        <div className="flex gap-1.5 sm:gap-2">
           {digits.map((digit, index) => (
             <span
               key={index}
-              className="grid h-16 w-11 place-items-center rounded-2xl border border-white/12 bg-white/[0.05] text-4xl font-bold tabular-nums text-mist-50 shadow-[inset_0_1px_0_rgba(255,255,255,0.08)] sm:h-20 sm:w-16 sm:text-5xl"
+              className="grid h-[4.5rem] w-12 place-items-center rounded-xl border-2 border-ink bg-card text-4xl font-extrabold tabular-nums sm:h-24 sm:w-16 sm:text-5xl"
             >
               {digit}
             </span>
           ))}
         </div>
-
-        <div className="mt-5 flex flex-wrap items-center justify-center gap-2">
-          <button
-            type="button"
-            onClick={() => onCopy(code, 'code')}
-            className="btn-ghost px-4 py-2.5 text-sm"
-          >
-            {copied === 'code' ? (
-              <Check className="size-4 text-acid-300" />
-            ) : (
-              <Copy className="size-4" />
-            )}
-            {copied === 'code' ? 'Copied' : 'Copy code'}
-          </button>
-          <button
-            type="button"
-            onClick={() => joinUrl && onCopy(joinUrl, 'link')}
-            disabled={!joinUrl}
-            className="btn-ghost px-4 py-2.5 text-sm"
-          >
-            {copied === 'link' ? (
-              <Check className="size-4 text-acid-300" />
-            ) : (
-              <Copy className="size-4" />
-            )}
-            {copied === 'link' ? 'Copied' : 'Copy join link'}
-          </button>
-        </div>
-        <p className="mt-3 truncate text-xs text-mist-500 sm:text-sm">
-          {joinUrl ? `Players open ${joinUrl}` : 'The join link appears once the room code is ready.'}
-        </p>
+        <button
+          type="button"
+          onClick={() => onCopy(code, 'code')}
+          className="btn-ghost px-3 py-2 text-sm"
+        >
+          {copied === 'code' ? (
+            <Check className="size-4 text-correct" />
+          ) : (
+            <Copy className="size-4" />
+          )}
+          {copied === 'code' ? 'Copied' : 'Copy code'}
+        </button>
       </div>
 
-      <div className="panel mt-9 p-6 sm:p-8">
-        <div className="flex items-end justify-between gap-6">
-          <div>
-            <p className="eyebrow">Players in the room</p>
-            <p className="mt-1 text-6xl leading-none font-bold tabular-nums text-acid-300">
-              {playerCount}
-            </p>
-          </div>
-          <div className="flex items-center gap-2 text-sm text-mist-400">
-            <span className="relative flex size-2.5">
-              <span className="absolute inline-flex size-full animate-ping rounded-full bg-acid-400 opacity-60" />
-              <span className="relative inline-flex size-2.5 rounded-full bg-acid-400" />
-            </span>
-            Lobby open
-          </div>
-        </div>
+      <div className="card mt-6 p-5">
+        <p className="text-sm font-bold text-ink">Players join at</p>
+        <p className="mt-1 truncate text-base font-semibold text-cobalt">
+          {joinUrl ?? 'The join link appears once the room code is ready.'}
+        </p>
+        <button
+          type="button"
+          onClick={() => joinUrl && onCopy(joinUrl, 'link')}
+          disabled={!joinUrl}
+          className="btn-ghost mt-3 px-3 py-2 text-sm"
+        >
+          {copied === 'link' ? (
+            <Check className="size-4 text-correct" />
+          ) : (
+            <Copy className="size-4" />
+          )}
+          {copied === 'link' ? 'Copied' : 'Copy join link'}
+        </button>
+      </div>
 
-        <div className="mt-7 border-t border-white/8 pt-6">
-          <p className="text-sm leading-relaxed text-mist-400">
-            {joinUrl ? (
-              <>
-                Players join at <span className="text-mist-200">{joinUrl}</span>.{' '}
-              </>
-            ) : null}
-            The first question goes out to everyone at the same moment.
-          </p>
-          <button type="button" onClick={onStart} disabled={!online} className="btn-primary mt-5 w-full">
-            <Play className="size-4" fill="currentColor" />
-            Start game
-          </button>
+      <div className="mt-7 flex flex-wrap items-end justify-between gap-6">
+        <div>
+          <p className="text-sm font-bold text-ink-2">Players in the room</p>
+          <p className="mt-1 text-6xl leading-none font-extrabold tabular-nums">{playerCount}</p>
           {playerCount === 0 && (
-            <p className="mt-3 flex items-center justify-center gap-2 text-center text-xs text-mist-500">
-              <Users className="size-3.5" />
-              Waiting for the first player to join.
-            </p>
+            <p className="mt-2 text-sm text-ink-3">Waiting for the first player to join.</p>
           )}
         </div>
+        <button
+          type="button"
+          onClick={onStart}
+          disabled={!online}
+          className="btn-primary px-6 py-4 text-base"
+        >
+          <Play className="size-4" fill="currentColor" />
+          Start game
+        </button>
       </div>
     </div>
   )
@@ -643,54 +591,53 @@ function LiveView({
 }) {
   const answeredCount = answered?.index === question.index ? answered.answered : 0
   const total = answered?.index === question.index ? answered.total : playerCount
+  const answeredPercent = total > 0 ? Math.min(100, (answeredCount / total) * 100) : 0
 
   return (
-    <div className="mx-auto w-full max-w-4xl py-3 animate-rise">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div className="flex flex-wrap items-center gap-2">
-          <span className="rounded-full border border-white/10 bg-white/[0.04] px-3 py-1.5 text-xs font-medium text-mist-300 tabular-nums">
-            Question {question.index + 1} of {question.total}
-          </span>
-          <span className="inline-flex items-center gap-1.5 rounded-full border border-acid-400/25 bg-acid-400/10 px-3 py-1.5 text-xs font-semibold text-acid-300 tabular-nums">
-            <Users className="size-3.5" />
-            {answeredCount} / {total} answered
-          </span>
-        </div>
-        <span className="rounded-full border border-white/10 bg-white/[0.04] px-3 py-1.5 text-xs font-medium text-mist-400 tabular-nums">
-          Room {code}
+    <div className="mx-auto w-full max-w-4xl py-2 animate-rise">
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="tile tabular-nums">
+          Question {question.index + 1} of {question.total}
         </span>
+        <span className="tile tabular-nums">
+          {answeredCount} / {total} answered
+        </span>
+        <span className="tile tabular-nums">Room {code}</span>
       </div>
 
-      <div className="panel mt-4 p-6 sm:p-9">
-        <TimerBar seconds={seconds} progress={progress} />
-        <div className="mt-4 h-1.5 overflow-hidden rounded-full bg-white/8">
+      <div className="card mt-4 p-5 sm:p-8">
+        <TimerBar seconds={seconds} progress={progress} size="lg" />
+
+        <div className="mt-3 h-2.5 overflow-hidden rounded-full border border-line bg-paper">
           <div
-            className="h-full rounded-full bg-iris-400 transition-[width] duration-300"
-            style={{ width: `${total > 0 ? Math.min(100, (answeredCount / total) * 100) : 0}%` }}
+            className="h-full rounded-full bg-ink transition-[width] duration-300"
+            style={{ width: `${answeredPercent}%` }}
           />
         </div>
 
-        <h1 className="mt-8 text-2xl leading-tight font-bold text-balance sm:text-4xl">
+        <h1 className="mt-6 text-4xl leading-tight font-extrabold tracking-tight text-balance sm:text-5xl">
           {question.text}
         </h1>
 
-        <div className="mt-7 grid gap-3 sm:grid-cols-2">
+        <div className="mt-6 grid gap-3 sm:grid-cols-2">
           {question.options.map((option, index) => (
             <div
               key={index}
-              className="flex items-center gap-3.5 rounded-2xl border border-white/8 bg-night-900/55 px-4 py-4"
+              className="flex items-center gap-3 rounded-xl border border-line bg-paper px-4 py-4"
             >
               <span
-                className={`grid size-9 shrink-0 place-items-center rounded-xl text-sm font-bold ${OPTION_ACCENTS[index % OPTION_ACCENTS.length]}`}
+                className="grid size-10 shrink-0 place-items-center rounded-lg text-base font-extrabold text-white"
+                style={{ backgroundColor: choiceColor(index) }}
               >
                 {String.fromCharCode(65 + index)}
               </span>
-              <span className="text-base font-medium text-mist-100 sm:text-lg">{option}</span>
+              <ChoiceShape index={index} className="size-5 shrink-0" />
+              <span className="text-lg font-semibold text-ink sm:text-xl">{option}</span>
             </div>
           ))}
         </div>
 
-        <p className="mt-7 border-t border-white/8 pt-5 text-sm text-mist-400">
+        <p className="mt-6 border-t border-line pt-4 text-sm font-semibold text-ink-2">
           {ended
             ? 'Answers are locked — results are landing on player phones.'
             : 'Players can change their answer until the clock runs out.'}
@@ -710,13 +657,13 @@ function EndedView({
   onNewRoom: () => void
 }) {
   return (
-    <div className="mx-auto my-auto w-full max-w-2xl py-6 animate-rise">
-      <div className="flex flex-wrap items-start justify-between gap-4">
+    <div className="mx-auto w-full max-w-2xl py-4 animate-rise">
+      <div className="flex flex-wrap items-center justify-between gap-4">
         <div>
-          <p className="eyebrow">
-            Room {code} · {leaderboard.length} players
+          <h1 className="text-3xl font-extrabold tracking-tight sm:text-4xl">Final standings</h1>
+          <p className="mt-1 text-sm text-ink-2 tabular-nums">
+            Room {code} · {leaderboard.length} player{leaderboard.length === 1 ? '' : 's'}
           </p>
-          <h1 className="mt-2 text-4xl font-bold tracking-tight">Final standings</h1>
         </div>
         <button type="button" onClick={onNewRoom} className="btn-ghost px-4 py-2.5 text-sm">
           <RotateCcw className="size-4" />
@@ -724,19 +671,12 @@ function EndedView({
         </button>
       </div>
 
-      <div className="panel mt-7 p-5 sm:p-7">
-        <div className="mb-4 flex items-center justify-between gap-3">
-          <p className="eyebrow">Full leaderboard</p>
-          <span className="rounded-full border border-white/10 bg-white/[0.04] px-2.5 py-1 text-[0.65rem] font-semibold tracking-[0.14em] text-mist-400 uppercase">
-            Host view
-          </span>
-        </div>
+      <div className="card mt-5 p-4 sm:p-6">
         <Leaderboard rows={leaderboard} emptyLabel="No players finished this game" />
       </div>
 
-      <p className="mt-5 text-center text-xs leading-relaxed text-mist-500">
-        Players see their own rank and the top 5. This screen is the only place with the full
-        leaderboard.
+      <p className="mt-3 text-xs text-ink-3">
+        Players see their own rank and the top 5. This screen has the full leaderboard.
       </p>
     </div>
   )

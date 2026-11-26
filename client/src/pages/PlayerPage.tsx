@@ -1,22 +1,22 @@
 import { useEffect, useRef, useState } from 'react'
-import { Link, useNavigate, useSearchParams } from 'react-router-dom'
+import { useNavigate, useSearchParams } from 'react-router-dom'
 import {
+  AlertTriangle,
   ArrowRight,
   Check,
   ChevronLeft,
   Clock,
   Crown,
   Loader2,
-  Smartphone,
   WifiOff,
   X,
 } from 'lucide-react'
-import { Backdrop } from '../components/Backdrop'
+import { ChoiceShape, choiceColor } from '../components/ChoiceShape'
 import { ConnectionPill, type ConnectionState } from '../components/ConnectionPill'
 import { ErrorBanner } from '../components/ErrorBanner'
 import { Leaderboard } from '../components/Leaderboard'
 import { Logo } from '../components/Logo'
-import { TimerRing } from '../components/Timer'
+import { TimerBar } from '../components/Timer'
 import { useCountdown } from '../hooks/useCountdown'
 import {
   isPlayerGameEnded,
@@ -35,13 +35,6 @@ import {
 import { createSocket } from '../lib/socket'
 
 type PlayerPhase = 'join' | 'joining' | 'lobby' | 'question' | 'reveal' | 'ended'
-
-const OPTION_ACCENTS = [
-  'bg-iris-500 text-white',
-  'bg-aqua-400 text-night-950',
-  'bg-coral-400 text-night-950',
-  'bg-acid-400 text-night-950',
-]
 
 interface FinalState {
   rank: number
@@ -268,28 +261,35 @@ export function PlayerPage() {
     setPhase('join')
   }
 
-  const showOfflineBanner =
-    connection === 'offline' && phase !== 'join' && phase !== 'joining'
+  const inGameplay = (phase === 'question' || phase === 'reveal') && question != null
+  const showOfflineBanner = connection === 'offline' && phase !== 'join' && phase !== 'joining'
 
   return (
-    <div className="relative flex min-h-svh flex-col">
-      <Backdrop />
-
-      <header className="mx-auto flex w-full max-w-md items-center justify-between px-5 pt-5 pb-2">
-        <div className="flex items-center gap-2.5">
-          <Logo compact />
-          {code && phase !== 'join' && phase !== 'joining' && (
-            <span className="rounded-full border border-white/10 bg-white/[0.04] px-2.5 py-1 text-[0.7rem] font-medium text-mist-400 tabular-nums">
-              Room {code}
-            </span>
+    <div className="flex min-h-svh flex-col">
+      <header className="sticky top-0 z-10 border-b border-line bg-paper px-4 py-2.5">
+        <div className="mx-auto flex w-full max-w-md items-center justify-between gap-3">
+          <div className="flex min-w-0 items-center gap-2">
+            {!inGameplay && <Logo compact />}
+            {code && phase !== 'join' && phase !== 'joining' && (
+              <span className="rounded-md border border-line bg-card px-2 py-1 text-xs font-bold text-ink-2 tabular-nums">
+                Room {code}
+              </span>
+            )}
+            {inGameplay && question && (
+              <span className="text-xs font-bold text-ink-2 tabular-nums">
+                Question {question.index + 1} / {question.total}
+              </span>
+            )}
+          </div>
+          {connection === 'offline' && phase !== 'join' && phase !== 'joining' && (
+            <ConnectionPill state="offline" />
           )}
         </div>
-        <ConnectionPill state={connection} />
       </header>
 
-      <main className="mx-auto flex w-full max-w-md flex-1 flex-col px-5 pt-3 pb-[max(1.5rem,env(safe-area-inset-bottom))]">
+      <main className="mx-auto flex w-full max-w-md flex-1 flex-col px-4 pt-4 pb-[max(1.25rem,env(safe-area-inset-bottom))]">
         {showOfflineBanner && (
-          <div className="mb-4 flex items-center gap-2.5 rounded-2xl border border-[#ffd08a]/25 bg-[#ffd08a]/10 px-4 py-2.5 text-xs text-[#ffe1b0]">
+          <div className="mb-3 flex items-center gap-2.5 rounded-xl border border-warn/25 bg-warn-soft px-3 py-2.5 text-xs font-semibold text-warn">
             <WifiOff className="size-3.5 shrink-0" />
             Reconnecting — your score is safe.
           </div>
@@ -370,24 +370,14 @@ function JoinView({
   onSubmit: (event: React.FormEvent) => void
 }) {
   return (
-    <div className="my-auto py-6 animate-rise">
-      <span className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/[0.04] px-3 py-1.5 text-xs font-semibold text-mist-300">
-        <Smartphone className="size-3.5 text-iris-400" />
-        Player
-      </span>
-      <h1 className="mt-4 text-[2.7rem] leading-[1.02] font-bold tracking-tight">
-        Jump into
-        <br />
-        the quiz.
-      </h1>
-      <p className="mt-3 text-base leading-relaxed text-mist-400">
-        Enter the code on the big screen, pick a nickname, and get your phone ready.
-      </p>
+    <div className="my-auto py-4 animate-rise">
+      <h1 className="text-4xl leading-tight font-extrabold tracking-tight">Join a game</h1>
+      <p className="mt-2 text-sm text-ink-2">Enter the code on the board and pick a nickname.</p>
 
-      <div className="mt-7">
+      <div className="mt-6">
         <ErrorBanner message={error} onDismiss={onDismissError} />
-        <form onSubmit={onSubmit} className="panel p-5 sm:p-6">
-          <label htmlFor="room-code" className="text-sm font-medium text-mist-200">
+        <form onSubmit={onSubmit} className="card-strong p-5">
+          <label htmlFor="room-code" className="text-sm font-bold text-ink">
             Room code
           </label>
           <input
@@ -400,10 +390,10 @@ function JoinView({
             maxLength={6}
             placeholder="000000"
             aria-label="Six digit room code"
-            className="field mt-2 text-center text-3xl font-bold tracking-[0.32em] tabular-nums placeholder:text-mist-500/45"
+            className="field mt-2 text-center text-3xl font-extrabold tracking-[0.28em] tabular-nums placeholder:text-ink-3/50"
           />
 
-          <label htmlFor="nickname" className="mt-5 block text-sm font-medium text-mist-200">
+          <label htmlFor="nickname" className="mt-4 block text-sm font-bold text-ink">
             Nickname
           </label>
           <input
@@ -415,24 +405,22 @@ function JoinView({
             placeholder="e.g. Kwame"
             className="field mt-2"
           />
-          <p className="mt-2 text-xs text-mist-500">
+          <p className="mt-1.5 text-xs text-ink-3">
             If someone beat you to it, the room adds a number.
           </p>
 
-          <button type="submit" disabled={!online} className="btn-primary mt-5 w-full">
+          <button type="submit" disabled={!online} className="btn-primary mt-5 w-full py-3.5">
             Join room
             <ArrowRight className="size-4" />
           </button>
           {!online && (
-            <p className="mt-3 text-center text-xs text-mist-500">
-              Connecting to the game server…
-            </p>
+            <p className="mt-2.5 text-center text-xs text-ink-3">Connecting to the game server…</p>
           )}
         </form>
       </div>
 
-      <p className="mt-4 px-2 text-center text-xs leading-relaxed text-mist-500">
-        No account needed. This browser remembers your player token so you can rejoin if you drop.
+      <p className="mt-4 text-center text-xs text-ink-3">
+        No account needed. This browser remembers your seat if the connection drops.
       </p>
     </div>
   )
@@ -451,24 +439,19 @@ function JoiningView({
 }) {
   return (
     <div className="my-auto py-10 text-center animate-rise">
-      <div className="relative mx-auto grid size-20 place-items-center">
-        <span className="absolute inset-0 rounded-full bg-acid-400/15 blur-xl" />
-        <span className="grid size-16 place-items-center rounded-full border border-white/10 bg-night-850">
-          {online ? (
-            <Loader2 className="size-6 animate-spin text-acid-300" />
-          ) : (
-            <WifiOff className="size-6 text-coral-400" />
-          )}
-        </span>
-      </div>
-      <h1 className="mt-6 text-2xl font-bold">
-        {online ? 'Getting you in…' : 'Can’t reach the server'}
+      <span className="mx-auto grid size-12 place-items-center rounded-xl border border-line bg-card">
+        {online ? (
+          <Loader2 className="size-5 animate-spin text-cobalt" />
+        ) : (
+          <WifiOff className="size-5 text-wrong" />
+        )}
+      </span>
+      <h1 className="mt-5 text-2xl font-extrabold tracking-tight">
+        {online ? 'Joining the room…' : 'Can’t reach the server'}
       </h1>
-      <p className="mt-2 text-sm text-mist-400">
-        {code ? `Room ${code}` : 'Hold tight'} · this usually takes a second.
-      </p>
-      {error && <p className="mt-4 text-sm text-coral-400">{error}</p>}
-      <button type="button" onClick={onCancel} className="btn-ghost mt-7 px-4 py-2.5 text-sm">
+      <p className="mt-1.5 text-sm text-ink-2">{code ? `Room ${code}` : 'Hold tight'}</p>
+      {error && <p className="mt-3 text-sm font-semibold text-wrong">{error}</p>}
+      <button type="button" onClick={onCancel} className="btn-ghost mt-6 px-4 py-2.5 text-sm">
         <ChevronLeft className="size-4" />
         Back to join
       </button>
@@ -479,36 +462,17 @@ function JoiningView({
 function LobbyView({ nickname, code }: { nickname: string; code: string }) {
   return (
     <div className="my-auto py-8 text-center animate-rise">
-      <div className="relative mx-auto grid size-24 place-items-center">
-        <span className="absolute inset-0 animate-ping rounded-full bg-acid-400/10" />
-        <span className="absolute inset-2 rounded-full bg-acid-400/10" />
-        <span className="relative grid size-16 place-items-center rounded-full bg-acid-400 text-night-950 shadow-[0_0_40px_-6px_rgba(211,251,110,0.8)]">
-          <Check className="size-7" strokeWidth={3} />
-        </span>
-      </div>
+      <span className="mx-auto grid size-12 place-items-center rounded-xl bg-correct text-white">
+        <Check className="size-6" strokeWidth={3} />
+      </span>
 
-      <p className="mt-7 eyebrow">You&apos;re in</p>
-      <h1 className="mt-2 text-4xl font-bold tracking-tight break-words">{nickname}</h1>
+      <h1 className="mt-5 text-3xl font-extrabold tracking-tight break-words">{nickname}</h1>
+      <p className="mt-1.5 text-sm font-semibold text-ink-2 tabular-nums">Room {code}</p>
 
-      <div className="mt-4 flex items-center justify-center gap-2 text-sm text-mist-400">
-        <span className="rounded-full border border-white/10 bg-white/[0.04] px-3 py-1.5 tabular-nums">
-          Room {code}
-        </span>
-      </div>
-
-      <div className="panel mt-8 px-6 py-7">
-        <div className="flex items-center justify-center gap-1.5">
-          {[0, 1, 2].map((i) => (
-            <span
-              key={i}
-              className="size-2 animate-shimmer rounded-full bg-acid-400"
-              style={{ animationDelay: `${i * 180}ms` }}
-            />
-          ))}
-        </div>
-        <p className="mt-4 font-medium text-mist-100">Waiting for the host to start</p>
-        <p className="mt-1.5 text-sm leading-relaxed text-mist-400">
-          Keep this tab open. The first question lands here with everyone else&apos;s.
+      <div className="card mt-6 px-5 py-6">
+        <p className="text-base font-bold text-ink">Waiting for the host to start</p>
+        <p className="mt-1.5 text-sm leading-relaxed text-ink-2">
+          Keep this screen open. The first question arrives with everyone else’s.
         </p>
       </div>
     </div>
@@ -538,40 +502,37 @@ function QuestionView({
 }) {
   const locked = !started || ended || !online || ineligible
 
+  const status = ineligible
+    ? null
+    : !started
+      ? 'Get ready — answers open when the timer starts.'
+      : ended
+        ? 'Time is up — waiting for the results…'
+        : !online
+          ? 'Reconnecting — answers are paused.'
+          : selectedChoice != null
+            ? 'Locked in. Tap another option to change it.'
+            : 'Tap your answer. You can change it until time runs out.'
+
   return (
     <div className="flex flex-1 flex-col animate-rise">
-      <div className="flex items-start justify-between gap-4 pt-1">
-        <div>
-          <p className="eyebrow">
-            Question {question.index + 1} of {question.total}
-          </p>
-          <p className="mt-1.5 text-sm text-mist-400">
-            {question.type === 'true_false' ? 'True or false' : 'Choose one answer'}
-          </p>
-        </div>
-        <TimerRing seconds={seconds} progress={progress} size="lg" />
-      </div>
+      <TimerBar seconds={seconds} progress={progress} />
 
-      <div className="mt-4 flex gap-1.5" aria-hidden>
-        {Array.from({ length: question.total }).map((_, i) => (
-          <span
-            key={i}
-            className={`h-1 flex-1 rounded-full ${
-              i < question.index
-                ? 'bg-acid-400/55'
-                : i === question.index
-                  ? 'bg-acid-400'
-                  : 'bg-white/10'
-            }`}
-          />
-        ))}
-      </div>
-
-      <h1 className="mt-7 text-[1.7rem] leading-[1.15] font-bold tracking-tight text-balance sm:text-3xl">
+      <p className="mt-4 text-xs font-bold text-ink-3">
+        {question.type === 'true_false' ? 'True or false' : 'Choose one answer'}
+      </p>
+      <h1 className="mt-1.5 text-2xl leading-tight font-extrabold tracking-tight text-balance">
         {question.text}
       </h1>
 
-      <div className="mt-6 flex flex-col gap-3">
+      {ineligible && (
+        <div className="mt-4 flex items-start gap-2.5 rounded-xl border border-warn/25 bg-warn-soft px-3 py-2.5 text-sm font-semibold text-warn">
+          <AlertTriangle className="mt-0.5 size-4 shrink-0" />
+          You joined mid-question — scoring starts on the next question.
+        </div>
+      )}
+
+      <div className="mt-4 flex flex-col gap-2.5">
         {question.options.map((option, index) => {
           const selected = selectedChoice === index
           return (
@@ -581,50 +542,32 @@ function QuestionView({
               onClick={() => onChoose(index)}
               disabled={locked}
               aria-pressed={selected}
-              className={`flex w-full items-center gap-3.5 rounded-2xl border px-4 py-4 text-left transition-[transform,border-color,background-color] duration-150 active:scale-[0.99] disabled:cursor-not-allowed ${
-                selected
-                  ? 'border-acid-400 bg-acid-400/12 shadow-[0_0_0_1px_rgba(211,251,110,0.25)]'
-                  : 'border-white/10 bg-white/[0.04] enabled:hover:border-white/25 enabled:hover:bg-white/[0.06]'
-              } ${locked && !selected ? 'opacity-55' : ''}`}
+              style={selected ? { backgroundColor: `${choiceColor(index)}14` } : undefined}
+              className={`flex min-h-[56px] w-full items-center gap-3 rounded-xl border-2 px-3 py-2.5 text-left transition-[border-color,background-color,opacity] duration-150 disabled:cursor-not-allowed ${
+                selected ? 'border-ink' : 'border-line bg-card'
+              } ${locked && !selected ? 'opacity-50' : ''}`}
             >
               <span
-                className={`grid size-10 shrink-0 place-items-center rounded-xl text-sm font-bold ${OPTION_ACCENTS[index % OPTION_ACCENTS.length]}`}
+                className="grid size-9 shrink-0 place-items-center rounded-lg text-sm font-extrabold text-white"
+                style={{ backgroundColor: choiceColor(index) }}
               >
                 {String.fromCharCode(65 + index)}
               </span>
-              <span className="min-w-0 flex-1 text-[1.05rem] leading-snug font-medium">
+              <ChoiceShape index={index} className="size-4 shrink-0" />
+              <span className="min-w-0 flex-1 text-base leading-snug font-semibold text-ink">
                 {option}
               </span>
-              {selected && <Check className="size-5 shrink-0 text-acid-300" strokeWidth={3} />}
+              {selected && <Check className="size-5 shrink-0 text-ink" strokeWidth={3} />}
             </button>
           )
         })}
       </div>
 
-      <div className="mt-auto pt-6">
-        <p
-          className={`rounded-2xl px-4 py-3 text-center text-sm ${
-            ineligible
-              ? 'bg-iris-500/10 text-iris-400'
-              : ended
-                ? 'bg-coral-400/10 text-[#ffc4b8]'
-                : selectedChoice != null
-                  ? 'bg-acid-400/10 text-acid-200'
-                  : 'bg-white/[0.04] text-mist-400'
-          }`}
-          aria-live="polite"
-        >
-          {ineligible
-            ? 'You joined during this question — you can start scoring on the next one.'
-            : !started
-              ? 'Get ready — answers open when the timer starts.'
-              : ended
-                ? 'Time is up — waiting for the results…'
-                : selectedChoice != null
-                  ? 'Locked in. Tap another option to change it.'
-                  : 'Tap your answer. You can change it until time runs out.'}
+      {status && (
+        <p className="mt-auto pt-4 text-center text-xs font-semibold text-ink-3" aria-live="polite">
+          {status}
         </p>
-      </div>
+      )}
     </div>
   )
 }
@@ -642,91 +585,86 @@ function RevealView({
 }) {
   const picked = selectedChoice != null
   const correct = picked && selectedChoice === result.correctIndex
-  const heading = result.points > 0 ? 'Correct!' : picked ? 'Not quite' : 'Time’s up'
+  const heading = correct ? 'Correct!' : picked ? 'Not quite' : 'Time’s up'
+  const tone = correct ? 'correct' : picked ? 'wrong' : 'warn'
+
+  const box =
+    tone === 'correct'
+      ? 'border-correct bg-correct-soft text-correct'
+      : tone === 'wrong'
+        ? 'border-wrong bg-wrong-soft text-wrong'
+        : 'border-warn bg-warn-soft text-warn'
+
+  const Icon = tone === 'correct' ? Check : tone === 'wrong' ? X : Clock
+  const badge = tone === 'correct' ? 'bg-correct' : tone === 'wrong' ? 'bg-wrong' : 'bg-warn'
 
   return (
     <div className="flex flex-1 flex-col py-2 animate-rise">
-      <p className="eyebrow">Question {(question?.index ?? result.index) + 1} · results</p>
-      <div className="mt-1 flex items-end justify-between gap-4">
-        <h1 className="text-4xl font-bold tracking-tight">{heading}</h1>
-        {correct ? (
-          <span className="grid size-10 place-items-center rounded-full bg-acid-400 text-night-950">
-            <Check className="size-5" strokeWidth={3} />
-          </span>
-        ) : (
-          <span className="grid size-10 place-items-center rounded-full bg-white/8 text-mist-300">
-            <X className="size-5" strokeWidth={3} />
-          </span>
-        )}
+      <div className={`flex items-center gap-3 rounded-xl border-2 px-4 py-3 ${box}`}>
+        <span className={`grid size-9 shrink-0 place-items-center rounded-lg text-white ${badge}`}>
+          <Icon className="size-5" strokeWidth={3} />
+        </span>
+        <div>
+          <p className="text-xl font-extrabold tracking-tight">{heading}</p>
+          <p className="text-sm font-semibold">
+            {picked
+              ? `+${result.points} points`
+              : 'No answer locked in for this question.'}
+          </p>
+        </div>
       </div>
 
-      <div className="panel mt-5 p-5">
-        <div className="flex items-center justify-between gap-4">
-          <div>
-            <p className="eyebrow">Points earned</p>
-            <p
-              key={result.points}
-              className={`mt-1 animate-pop text-5xl leading-none font-bold tabular-nums ${
-                result.points > 0 ? 'text-acid-300' : 'text-coral-400'
-              }`}
-            >
-              +{result.points}
-            </p>
-          </div>
-          <div className="grid grid-cols-2 gap-5 text-right">
-            <div>
-              <p className="eyebrow">Total</p>
-              <p className="mt-1 text-2xl font-bold tabular-nums">{result.totalScore}</p>
-            </div>
-            <div>
-              <p className="eyebrow">Rank</p>
-              <p className="mt-1 text-2xl font-bold tabular-nums text-acid-300">
-                #{result.rank}
-              </p>
-            </div>
-          </div>
+      <div className="card mt-3 grid grid-cols-3 divide-x divide-line">
+        <div className="px-3 py-3 text-center">
+          <p className="text-xs font-semibold text-ink-3">Points</p>
+          <p
+            key={result.points}
+            className={`mt-0.5 text-2xl font-extrabold tabular-nums animate-pop ${
+              result.points > 0 ? 'text-correct' : 'text-wrong'
+            }`}
+          >
+            +{result.points}
+          </p>
+        </div>
+        <div className="px-3 py-3 text-center">
+          <p className="text-xs font-semibold text-ink-3">Total</p>
+          <p className="mt-0.5 text-2xl font-extrabold tabular-nums">
+            {result.totalScore.toLocaleString()}
+          </p>
+        </div>
+        <div className="px-3 py-3 text-center">
+          <p className="text-xs font-semibold text-ink-3">Rank</p>
+          <p className="mt-0.5 text-2xl font-extrabold tabular-nums">#{result.rank}</p>
         </div>
       </div>
 
       {question && (
         <>
-          <h2 className="mt-6 text-xl leading-snug font-semibold text-balance">
-            {question.text}
-          </h2>
-
-          <div className="mt-4 flex flex-col gap-2.5">
+          <h2 className="mt-5 text-base leading-snug font-bold text-balance">{question.text}</h2>
+          <div className="mt-2.5 flex flex-col gap-2">
             {question.options.map((option, index) => {
               const isCorrect = index === result.correctIndex
               const isWrongPick = selectedChoice === index && !isCorrect
               return (
                 <div
                   key={index}
-                  className={`flex items-center gap-3 rounded-2xl border px-4 py-3 ${
+                  className={`flex items-center gap-2.5 rounded-lg border px-3 py-2 ${
                     isCorrect
-                      ? 'border-acid-400/60 bg-acid-400/12'
+                      ? 'border-correct bg-correct-soft'
                       : isWrongPick
-                        ? 'border-coral-400/50 bg-coral-400/10'
-                        : 'border-white/8 bg-white/[0.025] opacity-65'
+                        ? 'border-wrong bg-wrong-soft'
+                        : 'border-line bg-card opacity-70'
                   }`}
                 >
                   <span
-                    className={`grid size-8 shrink-0 place-items-center rounded-lg text-xs font-bold ${
-                      isCorrect
-                        ? 'bg-acid-400 text-night-950'
-                        : isWrongPick
-                          ? 'bg-coral-400 text-night-950'
-                          : `${OPTION_ACCENTS[index % OPTION_ACCENTS.length]} opacity-75`
-                    }`}
+                    className="grid size-6 shrink-0 place-items-center rounded text-xs font-extrabold text-white"
+                    style={{ backgroundColor: choiceColor(index) }}
                   >
                     {String.fromCharCode(65 + index)}
                   </span>
-                  <span className="min-w-0 flex-1 text-sm font-medium">{option}</span>
-                  {isCorrect && (
-                    <Check className="size-4 shrink-0 text-acid-300" strokeWidth={3} />
-                  )}
-                  {isWrongPick && (
-                    <X className="size-4 shrink-0 text-coral-400" strokeWidth={3} />
-                  )}
+                  <span className="min-w-0 flex-1 text-sm font-semibold">{option}</span>
+                  {isCorrect && <Check className="size-4 shrink-0 text-correct" strokeWidth={3} />}
+                  {isWrongPick && <X className="size-4 shrink-0 text-wrong" strokeWidth={3} />}
                 </div>
               )
             })}
@@ -734,14 +672,8 @@ function RevealView({
         </>
       )}
 
-      <div className="mt-6">
-        <div className="mb-2.5 flex items-center justify-between">
-          <p className="eyebrow">Top 5 right now</p>
-          <span className="flex items-center gap-1.5 text-[0.65rem] font-medium tracking-[0.14em] text-mist-500 uppercase">
-            <span className="size-1.5 animate-shimmer rounded-full bg-acid-400" />
-            Next up soon
-          </span>
-        </div>
+      <div className="mt-5">
+        <p className="mb-2 text-xs font-bold text-ink-3">Top 5 right now</p>
         <Leaderboard rows={result.top5} highlight={nickname} limit={5} />
       </div>
     </div>
@@ -760,49 +692,27 @@ function FinalView({
   const won = final.rank === 1
 
   return (
-    <div className="flex flex-1 flex-col justify-center py-6 animate-rise">
-      <div className="text-center">
-        <span className="mx-auto grid size-14 place-items-center rounded-2xl bg-acid-400/12 text-acid-300">
-          {won ? <Crown className="size-7" /> : <Clock className="size-7" />}
+    <div className="flex flex-1 flex-col justify-center py-4 animate-rise">
+      <div className="card-strong p-5 text-center">
+        <span className="mx-auto grid size-11 place-items-center rounded-xl bg-ink text-paper">
+          {won ? <Crown className="size-5" /> : <Check className="size-5" strokeWidth={3} />}
         </span>
-        <p className="mt-5 eyebrow">Final result</p>
-        <h1 className="mt-2 text-4xl font-bold tracking-tight text-balance">
-          {won ? 'You took the crown.' : 'That’s a wrap.'}
-        </h1>
-      </div>
-
-      <div className="panel mt-6 p-6 text-center">
-        <p className="eyebrow">Your rank</p>
-        <p className="mt-1 text-7xl leading-none font-bold tabular-nums text-acid-300">
-          #{final.rank}
+        <p className="mt-3 text-sm font-bold text-ink-2">{won ? 'You won the room.' : 'Final result'}</p>
+        <p className="mt-1 text-5xl font-extrabold tabular-nums">#{final.rank}</p>
+        <p className="mt-1 text-sm font-semibold text-ink-2 tabular-nums">
+          {final.score.toLocaleString()} points · {nickname}
         </p>
-        <div className="mt-5 flex items-center justify-center gap-2 text-sm text-mist-400">
-          <span className="rounded-full border border-white/10 bg-white/[0.04] px-3 py-1.5 font-semibold text-mist-200 tabular-nums">
-            {final.score.toLocaleString()} pts
-          </span>
-          <span className="rounded-full border border-white/10 bg-white/[0.04] px-3 py-1.5">
-            {nickname}
-          </span>
-        </div>
       </div>
 
-      <div className="mt-6">
-        <p className="mb-2.5 eyebrow">Top 5</p>
+      <div className="mt-5">
+        <p className="mb-2 text-xs font-bold text-ink-3">Top 5</p>
         <Leaderboard rows={final.rows} highlight={nickname} limit={5} />
       </div>
 
-      <div className="mt-6 flex flex-col gap-2.5">
-        <button type="button" onClick={onPlayAgain} className="btn-primary w-full">
-          Join another game
-          <ArrowRight className="size-4" />
-        </button>
-        <Link
-          to="/"
-          className="py-2 text-center text-sm text-mist-400 transition-colors hover:text-mist-200"
-        >
-          Back to home
-        </Link>
-      </div>
+      <button type="button" onClick={onPlayAgain} className="btn-primary mt-5 w-full py-3.5">
+        Join another game
+        <ArrowRight className="size-4" />
+      </button>
     </div>
   )
 }

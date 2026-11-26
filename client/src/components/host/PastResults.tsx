@@ -1,14 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import {
-  ArrowLeft,
-  CalendarDays,
-  ChevronDown,
-  ChevronRight,
-  Loader2,
-  RefreshCw,
-  Trophy,
-  Users,
-} from 'lucide-react'
+import { ArrowLeft, ChevronDown, ChevronRight, Loader2, RefreshCw, Trophy } from 'lucide-react'
 import { ErrorBanner } from '../ErrorBanner'
 import {
   describeApiError,
@@ -19,12 +10,6 @@ import {
   type SessionPlayer,
   type SessionSummary,
 } from '../../lib/api'
-
-const MEDAL = [
-  'bg-acid-400 text-night-950',
-  'bg-mist-100 text-night-950',
-  'bg-[#e0a96d] text-night-950',
-]
 
 function formatDateTime(value: string): string {
   const date = new Date(value)
@@ -142,74 +127,61 @@ export function PastResults({ token }: { token: string }) {
     const duration = detail ? formatDuration(detail.startedAt, detail.endedAt) : ''
 
     return (
-      <div className="mx-auto w-full max-w-4xl py-6 animate-rise">
+      <div className="animate-rise">
         <button
           type="button"
           onClick={closeDetail}
-          className="inline-flex items-center gap-1.5 text-sm text-mist-400 transition-colors hover:text-mist-200"
+          className="inline-flex items-center gap-1.5 text-sm font-semibold text-ink-2 transition-colors hover:text-ink"
         >
           <ArrowLeft className="size-4" />
           All results
         </button>
 
         {detailLoading ? (
-          <div className="panel mt-5 flex items-center justify-center gap-2 px-5 py-16 text-sm text-mist-400">
+          <div className="card mt-4 flex items-center justify-center gap-2 px-5 py-16 text-sm text-ink-2">
             <Loader2 className="size-4 animate-spin" />
             Loading the full leaderboard…
           </div>
         ) : detailError ? (
-          <div className="mt-5">
+          <div className="mt-4">
             <ErrorBanner message={detailError} onDismiss={() => setDetailError(null)} />
           </div>
         ) : detail ? (
           <>
-            <div className="mt-5 flex flex-wrap items-end justify-between gap-4">
+            <div className="mt-4 flex flex-wrap items-end justify-between gap-4">
               <div>
-                <p className="eyebrow">Room {detail.code} · final results</p>
-                <h1 className="mt-2 text-4xl font-bold tracking-tight text-balance">
+                <h1 className="text-3xl font-extrabold tracking-tight text-balance">
                   {selectedSession ? titleFor(selectedSession) : 'Game results'}
                 </h1>
-                <p className="mt-2 text-sm text-mist-400">
+                <p className="mt-1 text-sm text-ink-2 tabular-nums">
                   {formatDateTime(detail.endedAt)} · {detail.players.length} player
-                  {detail.players.length === 1 ? '' : 's'}
+                  {detail.players.length === 1 ? '' : 's'} · Room {detail.code}
                 </p>
               </div>
-              <div className="flex flex-wrap gap-2 text-xs">
-                <span className="rounded-full border border-white/10 bg-white/[0.04] px-3 py-1.5 font-medium text-mist-300 tabular-nums">
-                  Room {detail.code}
-                </span>
-                {duration && (
-                  <span className="rounded-full border border-white/10 bg-white/[0.04] px-3 py-1.5 font-medium text-mist-300">
-                    {duration}
-                  </span>
-                )}
-              </div>
+              {duration && <span className="tile">{duration}</span>}
             </div>
 
-            <div className="panel mt-6 p-5 sm:p-7">
-              <div className="mb-4 flex items-center justify-between gap-3">
-                <p className="eyebrow">Full leaderboard</p>
-                <span className="rounded-full border border-white/10 bg-white/[0.04] px-2.5 py-1 text-[0.65rem] font-semibold tracking-[0.14em] text-mist-400 uppercase">
-                  Host view
-                </span>
+            <div className="card mt-5 overflow-hidden">
+              <div className="grid grid-cols-[2.25rem_1fr_auto_1.5rem] items-center gap-3 border-b border-line bg-paper px-4 py-2.5 text-xs font-bold text-ink-3">
+                <span>Rank</span>
+                <span>Player</span>
+                <span className="text-right">Score</span>
+                <span />
               </div>
 
               {ranked.length === 0 ? (
-                <p className="rounded-2xl border border-dashed border-white/12 px-4 py-6 text-center text-sm text-mist-400">
+                <p className="px-4 py-8 text-center text-sm text-ink-2">
                   No players were saved for this game.
                 </p>
               ) : (
-                <ol className="flex flex-col gap-2">
+                <ol className="divide-y divide-line">
                   {ranked.map((player) => {
                     const expanded = expandedPlayerId === player.playerId
                     const answers = [...player.answers].sort(
                       (a, b) => a.questionIndex - b.questionIndex,
                     )
                     return (
-                      <li
-                        key={player.playerId}
-                        className="rounded-2xl border border-white/8 bg-white/[0.035]"
-                      >
+                      <li key={player.playerId}>
                         <button
                           type="button"
                           onClick={() =>
@@ -218,50 +190,44 @@ export function PastResults({ token }: { token: string }) {
                             )
                           }
                           aria-expanded={expanded}
-                          className="flex w-full items-center gap-3 px-3 py-3 text-left sm:px-4"
+                          className="grid w-full grid-cols-[2.25rem_1fr_auto_1.5rem] items-center gap-3 px-4 py-3 text-left transition-colors hover:bg-paper"
                         >
                           <span
-                            className={`grid size-8 shrink-0 place-items-center rounded-xl text-sm font-bold tabular-nums ${
-                              player.rank <= 3 ? MEDAL[player.rank - 1] : 'bg-white/8 text-mist-300'
+                            className={`grid size-6 place-items-center rounded text-xs font-extrabold tabular-nums ${
+                              player.rank <= 3 ? 'bg-ink text-paper' : 'text-ink-2'
                             }`}
                           >
                             {player.rank}
                           </span>
-                          <span className="min-w-0 flex-1 truncate font-medium text-mist-100">
-                            {player.nickname}
-                          </span>
-                          <span className="shrink-0 font-semibold text-mist-300 tabular-nums">
+                          <span className="truncate text-sm font-semibold">{player.nickname}</span>
+                          <span className="text-sm font-bold text-ink-2 tabular-nums">
                             {player.totalScore.toLocaleString()}
-                            <span className="ml-1 text-[0.65rem] font-medium tracking-wider text-mist-500 uppercase">
-                              pts
-                            </span>
                           </span>
                           <ChevronDown
-                            className={`size-4 shrink-0 text-mist-500 transition-transform ${
+                            className={`size-4 text-ink-3 transition-transform ${
                               expanded ? 'rotate-180' : ''
                             }`}
                           />
                         </button>
 
                         {expanded && (
-                          <div className="border-t border-white/8 px-3 py-3 sm:px-4">
-                            <p className="eyebrow">Question breakdown</p>
+                          <div className="border-t border-line bg-paper px-4 py-3">
                             {answers.length === 0 ? (
-                              <p className="mt-2 text-xs text-mist-500">No answers recorded.</p>
+                              <p className="text-xs text-ink-3">No answers recorded.</p>
                             ) : (
-                              <div className="mt-2 flex flex-col gap-1.5">
+                              <div className="flex flex-col gap-1">
                                 {answers.map((answer) => (
                                   <div
                                     key={answer.questionIndex}
-                                    className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-xl bg-night-950/40 px-3 py-2 text-xs"
+                                    className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-lg border border-line bg-card px-3 py-1.5 text-xs"
                                   >
-                                    <span className="font-semibold text-mist-300 tabular-nums">
+                                    <span className="font-bold text-ink-2 tabular-nums">
                                       Q{answer.questionIndex + 1}
                                     </span>
                                     <span
-                                      className={
-                                        answer.correct ? 'text-acid-300' : 'text-coral-400'
-                                      }
+                                      className={`font-semibold ${
+                                        answer.correct ? 'text-correct' : 'text-wrong'
+                                      }`}
                                     >
                                       {answer.correct
                                         ? 'Correct'
@@ -270,16 +236,16 @@ export function PastResults({ token }: { token: string }) {
                                           : 'Wrong'}
                                     </span>
                                     {answer.choiceIndex != null && (
-                                      <span className="text-mist-500">
+                                      <span className="text-ink-3">
                                         Choice {String.fromCharCode(65 + answer.choiceIndex)}
                                       </span>
                                     )}
                                     {answer.responseMs != null && (
-                                      <span className="text-mist-500 tabular-nums">
+                                      <span className="text-ink-3 tabular-nums">
                                         {(answer.responseMs / 1000).toFixed(1)}s
                                       </span>
                                     )}
-                                    <span className="ml-auto font-semibold text-mist-200 tabular-nums">
+                                    <span className="ml-auto font-bold text-ink tabular-nums">
                                       +{answer.points}
                                     </span>
                                   </div>
@@ -294,11 +260,6 @@ export function PastResults({ token }: { token: string }) {
                 </ol>
               )}
             </div>
-
-            <p className="mt-5 text-center text-xs leading-relaxed text-mist-500">
-              Expand any player to see their choice, correctness, response time, and points for
-              every question.
-            </p>
           </>
         ) : null}
       </div>
@@ -306,81 +267,75 @@ export function PastResults({ token }: { token: string }) {
   }
 
   return (
-    <div className="mx-auto w-full max-w-4xl py-6 animate-rise">
-      <div className="flex flex-wrap items-end justify-between gap-4">
-        <div>
-          <h2 className="text-xl font-semibold text-mist-100">Past results</h2>
-          <p className="mt-1 text-sm text-mist-400">
-            Every finished game, with the full leaderboard and per-question scores.
-          </p>
-        </div>
+    <div className="animate-rise">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <h2 className="text-xl font-extrabold tracking-tight">Past results</h2>
         <button
           type="button"
           onClick={() => setReloadKey((current) => current + 1)}
           disabled={loading}
-          className="btn-ghost px-4 py-2.5 text-sm"
+          className="btn-ghost px-3.5 py-2.5 text-sm"
         >
           <RefreshCw className={`size-4 ${loading ? 'animate-spin' : ''}`} />
           Refresh
         </button>
       </div>
 
-      <div className="mt-5">
+      <div className="mt-3">
         <ErrorBanner message={error} onDismiss={() => setError(null)} />
       </div>
 
       {loading && sessions.length === 0 ? (
-        <div className="panel flex items-center justify-center gap-2 px-5 py-12 text-sm text-mist-400">
+        <div className="card flex items-center justify-center gap-2 px-5 py-12 text-sm text-ink-2">
           <Loader2 className="size-4 animate-spin" />
           Loading past games…
         </div>
       ) : sessions.length === 0 ? (
-        <div className="panel px-6 py-12 text-center">
-          <span className="mx-auto grid size-12 place-items-center rounded-2xl bg-acid-400/12 text-acid-300">
-            <Trophy className="size-6" />
+        <div className="card px-6 py-12 text-center">
+          <span className="mx-auto grid size-11 place-items-center rounded-xl border border-line bg-paper text-ink-2">
+            <Trophy className="size-5" />
           </span>
-          <p className="mt-4 font-semibold text-mist-100">No finished games yet</p>
-          <p className="mx-auto mt-1.5 max-w-sm text-sm leading-relaxed text-mist-400">
-            Play a quiz with your class and the full results will land here automatically.
+          <p className="mt-4 text-base font-bold">No finished games yet</p>
+          <p className="mx-auto mt-1 max-w-sm text-sm leading-relaxed text-ink-2">
+            Run a quiz with your class and the full results land here automatically.
           </p>
         </div>
       ) : (
-        <ul className="mt-5 flex flex-col gap-3">
-          {sessions.map((session) => (
-            <li key={session.id} className="panel p-4 sm:p-5">
-              <div className="flex flex-wrap items-center justify-between gap-4">
+        <div className="card mt-4 overflow-hidden">
+          <div className="hidden grid-cols-[1fr_9rem_6rem_8rem] gap-3 border-b border-line bg-paper px-4 py-2.5 text-xs font-bold text-ink-3 sm:grid">
+            <span>Quiz</span>
+            <span>Finished</span>
+            <span>Players</span>
+            <span className="text-right">Leaderboard</span>
+          </div>
+          <ul className="divide-y divide-line">
+            {sessions.map((session) => (
+              <li
+                key={session.id}
+                className="grid gap-3 px-4 py-3.5 sm:grid-cols-[1fr_9rem_6rem_8rem] sm:items-center"
+              >
                 <div className="min-w-0">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <h2 className="truncate text-lg font-semibold text-mist-100">
-                      {titleFor(session)}
-                    </h2>
-                    <span className="rounded-full border border-white/10 bg-white/[0.04] px-2.5 py-1 text-[0.65rem] font-semibold tracking-[0.12em] text-mist-400 uppercase tabular-nums">
-                      Room {session.code}
-                    </span>
-                  </div>
-                  <p className="mt-1.5 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-mist-500">
-                    <span className="inline-flex items-center gap-1.5">
-                      <CalendarDays className="size-3.5" />
-                      {formatDateTime(session.endedAt)}
-                    </span>
-                    <span className="inline-flex items-center gap-1.5">
-                      <Users className="size-3.5" />
-                      {session.playerCount} player{session.playerCount === 1 ? '' : 's'}
-                    </span>
-                  </p>
+                  <p className="truncate text-base font-bold">{titleFor(session)}</p>
+                  <p className="mt-0.5 text-xs text-ink-3 tabular-nums">Room {session.code}</p>
                 </div>
-                <button
-                  type="button"
-                  onClick={() => void openSession(session)}
-                  className="btn-ghost px-4 py-2.5 text-sm"
-                >
-                  View results
-                  <ChevronRight className="size-4" />
-                </button>
-              </div>
-            </li>
-          ))}
-        </ul>
+                <p className="text-xs text-ink-2 tabular-nums">{formatDateTime(session.endedAt)}</p>
+                <p className="text-xs text-ink-2 tabular-nums">
+                  {session.playerCount} player{session.playerCount === 1 ? '' : 's'}
+                </p>
+                <div className="sm:text-right">
+                  <button
+                    type="button"
+                    onClick={() => void openSession(session)}
+                    className="btn-ghost px-3 py-2 text-sm"
+                  >
+                    View results
+                    <ChevronRight className="size-4" />
+                  </button>
+                </div>
+              </li>
+            ))}
+          </ul>
+        </div>
       )}
     </div>
   )

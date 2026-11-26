@@ -133,7 +133,7 @@ function validateDraft(draft: DraftQuiz): QuizInput | string {
 }
 
 const ICON_BUTTON =
-  'grid size-9 place-items-center rounded-xl border border-white/10 bg-white/[0.03] text-mist-400 transition-colors hover:border-white/25 hover:text-mist-100 disabled:pointer-events-none disabled:opacity-30'
+  'grid size-9 place-items-center rounded-lg border border-line bg-card text-ink-2 transition-colors hover:border-ink hover:text-ink disabled:pointer-events-none disabled:opacity-30'
 
 export function QuizBuilder({
   token,
@@ -225,38 +225,37 @@ export function QuizBuilder({
   }
 
   return (
-    <form onSubmit={save} className="mx-auto w-full max-w-4xl py-6 animate-rise">
+    <form onSubmit={save} className="mx-auto w-full max-w-4xl animate-rise">
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
           <button
             type="button"
             onClick={onCancel}
-            className="inline-flex items-center gap-1.5 text-sm text-mist-400 transition-colors hover:text-mist-200"
+            className="inline-flex items-center gap-1.5 text-sm font-semibold text-ink-2 transition-colors hover:text-ink"
           >
             <ArrowLeft className="size-4" />
             Back to saved quizzes
           </button>
-          <p className="eyebrow mt-5">Quiz builder</p>
-          <h1 className="mt-2 text-4xl font-bold tracking-tight sm:text-5xl">
-            {quiz ? 'Edit quiz.' : 'Build a quiz.'}
+          <h1 className="mt-3 text-3xl font-extrabold tracking-tight sm:text-4xl">
+            {quiz ? 'Edit quiz' : 'Build a quiz'}
           </h1>
-          <p className="mt-3 max-w-xl text-sm leading-relaxed text-mist-400">
-            Every question has its own time limit. Multiple choice takes 2–4 options; true/false
+          <p className="mt-1.5 max-w-xl text-sm leading-relaxed text-ink-2">
+            Each question has its own time limit. Multiple choice takes 2–4 options; true/false
             always uses True and False.
           </p>
         </div>
-        <button type="submit" disabled={saving} className="btn-primary px-5 py-3 text-sm">
+        <button type="submit" disabled={saving} className="btn-primary px-4 py-2.5">
           {saving ? <Loader2 className="size-4 animate-spin" /> : <Save className="size-4" />}
           {saving ? 'Saving…' : 'Save quiz'}
         </button>
       </div>
 
-      <div className="mt-6">
+      <div className="mt-5">
         <ErrorBanner message={error} onDismiss={() => setError(null)} />
       </div>
 
-      <div className="panel p-5 sm:p-6">
-        <label htmlFor="quiz-title" className="text-sm font-medium text-mist-200">
+      <div className="card p-5 sm:p-6">
+        <label htmlFor="quiz-title" className="text-sm font-bold text-ink">
           Quiz title
         </label>
         <input
@@ -269,10 +268,10 @@ export function QuizBuilder({
           placeholder="e.g. The Big Brain Warm-Up"
           className="field mt-2"
         />
-        <p className="mt-2 text-xs text-mist-500">{draft.title.trim().length}/120 characters</p>
+        <p className="mt-1.5 text-xs text-ink-3">{draft.title.trim().length}/120 characters</p>
       </div>
 
-      <div className="mt-5 flex flex-col gap-4">
+      <div className="mt-4 flex flex-col gap-3">
         {draft.questions.map((question, index) => (
           <QuestionEditor
             key={question.key}
@@ -294,18 +293,20 @@ export function QuizBuilder({
       <button
         type="button"
         onClick={addQuestion}
-        className="btn-ghost mt-4 w-full border-dashed py-3 text-sm"
+        className="mt-3 w-full rounded-xl border border-dashed border-line-strong px-4 py-3 text-sm font-bold text-ink-2 transition-colors hover:border-ink hover:text-ink"
       >
-        <Plus className="size-4" />
-        Add question
+        <span className="inline-flex items-center gap-1.5">
+          <Plus className="size-4" />
+          Add question
+        </span>
       </button>
 
-      <div className="mt-6 flex flex-wrap items-center justify-between gap-3 border-t border-white/8 pt-5">
-        <button type="button" onClick={onCancel} disabled={saving} className="btn-ghost px-4 py-2.5 text-sm">
+      <div className="mt-6 flex flex-wrap items-center justify-between gap-3 border-t border-line pt-5">
+        <button type="button" onClick={onCancel} disabled={saving} className="btn-ghost px-4 py-2.5">
           <ArrowLeft className="size-4" />
           Cancel
         </button>
-        <button type="submit" disabled={saving} className="btn-primary px-5 py-2.5 text-sm">
+        <button type="submit" disabled={saving} className="btn-primary px-4 py-2.5">
           {saving ? <Loader2 className="size-4 animate-spin" /> : <Save className="size-4" />}
           {saving ? 'Saving…' : quiz ? 'Save changes' : 'Create quiz'}
         </button>
@@ -338,13 +339,13 @@ function QuestionEditor({
   const isTrueFalse = question.type === 'true_false'
 
   return (
-    <section className="panel p-5 sm:p-6">
+    <section className="card p-5 sm:p-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-center gap-2.5">
-          <span className="grid size-8 place-items-center rounded-xl bg-iris-500/15 text-sm font-bold text-iris-400 tabular-nums">
+          <span className="grid size-8 place-items-center rounded-lg bg-ink text-sm font-extrabold text-paper tabular-nums">
             {index + 1}
           </span>
-          <p className="text-sm font-semibold text-mist-200">Question {index + 1}</p>
+          <p className="text-sm font-bold text-ink">Question {index + 1}</p>
         </div>
         <div className="flex items-center gap-1.5">
           <button
@@ -369,7 +370,7 @@ function QuestionEditor({
             type="button"
             onClick={onRemove}
             disabled={total <= 1}
-            className={`${ICON_BUTTON} hover:border-coral-400/40 hover:text-coral-400`}
+            className={`${ICON_BUTTON} hover:border-wrong hover:text-wrong`}
             aria-label={`Delete question ${index + 1}`}
           >
             <Trash2 className="size-4" />
@@ -377,11 +378,11 @@ function QuestionEditor({
         </div>
       </div>
 
-      <div className="mt-4 grid gap-3 sm:grid-cols-[1fr_10rem]">
+      <div className="mt-4 grid gap-3 sm:grid-cols-[1fr_9rem]">
         <div>
           <label
             htmlFor={`question-type-${question.key}`}
-            className="text-xs font-medium text-mist-400"
+            className="text-xs font-bold text-ink-2"
           >
             Question type
           </label>
@@ -398,7 +399,7 @@ function QuestionEditor({
         <div>
           <label
             htmlFor={`question-duration-${question.key}`}
-            className="text-xs font-medium text-mist-400"
+            className="text-xs font-bold text-ink-2"
           >
             Time limit (sec)
           </label>
@@ -417,7 +418,7 @@ function QuestionEditor({
 
       <label
         htmlFor={`question-text-${question.key}`}
-        className="mt-4 block text-xs font-medium text-mist-400"
+        className="mt-4 block text-xs font-bold text-ink-2"
       >
         Question
       </label>
@@ -433,13 +434,11 @@ function QuestionEditor({
 
       <div className="mt-4">
         <div className="flex items-center justify-between gap-3">
-          <p className="text-xs font-medium text-mist-400">
+          <p className="text-xs font-bold text-ink-2">
             {isTrueFalse ? 'Correct answer' : 'Options — pick the correct one'}
           </p>
           {!isTrueFalse && (
-            <span className="text-[0.65rem] font-medium tracking-[0.14em] text-mist-500 uppercase">
-              {question.options.length}/4
-            </span>
+            <span className="text-xs font-semibold text-ink-3">{question.options.length}/4</span>
           )}
         </div>
 
@@ -450,10 +449,10 @@ function QuestionEditor({
               return (
                 <label
                   key={option}
-                  className={`flex cursor-pointer items-center gap-3 rounded-2xl border px-4 py-3 transition-colors ${
+                  className={`flex cursor-pointer items-center gap-3 rounded-xl border px-4 py-3 transition-colors ${
                     selected
-                      ? 'border-acid-400/60 bg-acid-400/10'
-                      : 'border-white/10 bg-white/[0.03] hover:border-white/25'
+                      ? 'border-correct bg-correct-soft'
+                      : 'border-line bg-card hover:border-line-strong'
                   }`}
                 >
                   <input
@@ -464,15 +463,15 @@ function QuestionEditor({
                     className="sr-only"
                   />
                   <span
-                    className={`grid size-6 shrink-0 place-items-center rounded-full border ${
+                    className={`grid size-6 shrink-0 place-items-center rounded border ${
                       selected
-                        ? 'border-acid-400 bg-acid-400 text-night-950'
-                        : 'border-white/20 text-transparent'
+                        ? 'border-correct bg-correct text-white'
+                        : 'border-line-strong text-transparent'
                     }`}
                   >
                     <Check className="size-3.5" strokeWidth={3} />
                   </span>
-                  <span className="font-medium text-mist-100">{option}</span>
+                  <span className="font-semibold text-ink">{option}</span>
                 </label>
               )
             })}
@@ -486,10 +485,10 @@ function QuestionEditor({
                 <div key={optionIndex} className="flex items-center gap-2">
                   <label
                     aria-label={`Mark option ${letter} correct`}
-                    className={`grid size-10 shrink-0 cursor-pointer place-items-center rounded-xl border text-xs font-bold transition-colors ${
+                    className={`grid size-10 shrink-0 cursor-pointer place-items-center rounded-lg border text-xs font-extrabold transition-colors ${
                       selected
-                        ? 'border-acid-400 bg-acid-400 text-night-950'
-                        : 'border-white/12 bg-white/[0.03] text-mist-400 hover:border-white/25'
+                        ? 'border-correct bg-correct text-white'
+                        : 'border-line bg-card text-ink-2 hover:border-line-strong'
                     }`}
                   >
                     <input
@@ -532,7 +531,7 @@ function QuestionEditor({
               <button
                 type="button"
                 onClick={onOptionAdd}
-                className="mt-1 inline-flex items-center gap-1.5 self-start rounded-xl px-2 py-1 text-xs font-semibold text-iris-400 transition-colors hover:text-iris-300"
+                className="mt-1 inline-flex items-center gap-1.5 self-start rounded-lg px-1.5 py-1 text-xs font-bold text-cobalt transition-colors hover:text-cobalt-dark"
               >
                 <Plus className="size-3.5" />
                 Add option

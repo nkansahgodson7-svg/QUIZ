@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { ArrowRight, Loader2, Lock, Mail, ShieldCheck } from 'lucide-react'
+import { ArrowRight, Loader2 } from 'lucide-react'
 import { ErrorBanner } from '../ErrorBanner'
 
 export type AuthMode = 'login' | 'signup'
@@ -42,26 +42,22 @@ export function AuthView({
   }
 
   return (
-    <div className="mx-auto my-auto w-full max-w-md py-8 animate-rise">
-      <span className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/[0.04] px-3 py-1.5 text-xs font-semibold text-mist-300">
-        <ShieldCheck className="size-3.5 text-acid-300" />
-        Host account
-      </span>
-      <h1 className="mt-4 text-4xl leading-[1.05] font-bold tracking-tight text-balance sm:text-5xl">
-        {mode === 'login' ? 'Welcome back.' : 'Create your host account.'}
+    <div className="mx-auto my-auto w-full max-w-md py-6 animate-rise">
+      <h1 className="text-4xl leading-tight font-extrabold tracking-tight">
+        {mode === 'login' ? 'Host sign in' : 'Create a host account'}
       </h1>
-      <p className="mt-3 text-sm leading-relaxed text-mist-400">
-        Sign in to build quizzes, open rooms, and review past games. Players never need an account.
+      <p className="mt-2 text-sm text-ink-2">
+        {mode === 'login'
+          ? 'Sign in to build quizzes and run rooms.'
+          : 'One account covers every quiz you run.'}
       </p>
 
-      <div className="mt-7 grid grid-cols-2 gap-1 rounded-2xl border border-white/10 bg-white/[0.03] p-1">
+      <div className="mt-6 grid grid-cols-2 gap-1 rounded-xl border border-line bg-card p-1">
         <button
           type="button"
           onClick={() => switchMode('login')}
-          className={`rounded-xl px-3 py-2 text-sm font-semibold transition-colors ${
-            mode === 'login'
-              ? 'bg-acid-400 text-night-950'
-              : 'text-mist-400 hover:text-mist-200'
+          className={`rounded-lg px-3 py-2 text-sm font-bold transition-colors ${
+            mode === 'login' ? 'bg-ink text-paper' : 'text-ink-2 hover:text-ink'
           }`}
         >
           Log in
@@ -69,17 +65,15 @@ export function AuthView({
         <button
           type="button"
           onClick={() => switchMode('signup')}
-          className={`rounded-xl px-3 py-2 text-sm font-semibold transition-colors ${
-            mode === 'signup'
-              ? 'bg-acid-400 text-night-950'
-              : 'text-mist-400 hover:text-mist-200'
+          className={`rounded-lg px-3 py-2 text-sm font-bold transition-colors ${
+            mode === 'signup' ? 'bg-ink text-paper' : 'text-ink-2 hover:text-ink'
           }`}
         >
           Sign up
         </button>
       </div>
 
-      <form onSubmit={submit} className="panel mt-4 p-6">
+      <form onSubmit={submit} className="card-strong mt-4 p-5 sm:p-6">
         <ErrorBanner
           message={localError ?? error}
           onDismiss={() => {
@@ -88,46 +82,40 @@ export function AuthView({
           }}
         />
 
-        <label htmlFor="host-email" className="text-sm font-medium text-mist-200">
+        <label htmlFor="host-email" className="text-sm font-bold text-ink">
           Email
         </label>
-        <div className="relative mt-2">
-          <Mail className="pointer-events-none absolute top-1/2 left-3.5 size-4 -translate-y-1/2 text-mist-500" />
-          <input
-            id="host-email"
-            type="email"
-            value={email}
-            onChange={(event) => setEmail(event.target.value)}
-            autoComplete="email"
-            placeholder="you@school.edu"
-            required
-            className="field pl-10"
-          />
-        </div>
+        <input
+          id="host-email"
+          type="email"
+          value={email}
+          onChange={(event) => setEmail(event.target.value)}
+          autoComplete="email"
+          placeholder="you@school.edu"
+          required
+          className="field mt-2"
+        />
 
-        <label htmlFor="host-password" className="mt-4 block text-sm font-medium text-mist-200">
+        <label htmlFor="host-password" className="mt-4 block text-sm font-bold text-ink">
           Password
         </label>
-        <div className="relative mt-2">
-          <Lock className="pointer-events-none absolute top-1/2 left-3.5 size-4 -translate-y-1/2 text-mist-500" />
-          <input
-            id="host-password"
-            type="password"
-            value={password}
-            onChange={(event) => setPassword(event.target.value)}
-            autoComplete={mode === 'login' ? 'current-password' : 'new-password'}
-            placeholder="At least 6 characters"
-            minLength={6}
-            required
-            className="field pl-10"
-          />
-        </div>
+        <input
+          id="host-password"
+          type="password"
+          value={password}
+          onChange={(event) => setPassword(event.target.value)}
+          autoComplete={mode === 'login' ? 'current-password' : 'new-password'}
+          placeholder="At least 6 characters"
+          minLength={6}
+          required
+          className="field mt-2"
+        />
 
-        <button type="submit" disabled={busy} className="btn-primary mt-6 w-full">
+        <button type="submit" disabled={busy} className="btn-primary mt-5 w-full py-3.5">
           {busy ? (
             <>
               <Loader2 className="size-4 animate-spin" />
-              {mode === 'login' ? 'Logging in…' : 'Creating account…'}
+              {mode === 'login' ? 'Signing in…' : 'Creating account…'}
             </>
           ) : (
             <>
@@ -138,8 +126,8 @@ export function AuthView({
         </button>
       </form>
 
-      <p className="mt-4 px-2 text-center text-xs leading-relaxed text-mist-500">
-        Your host token is stored in this browser so you stay signed in. Log out any time.
+      <p className="mt-3 text-center text-xs text-ink-3">
+        This browser keeps you signed in until you log out.
       </p>
     </div>
   )
