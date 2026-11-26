@@ -176,7 +176,8 @@ export function HostPage() {
     phase === 'live' ? (question?.durationMs ?? null) : null,
   )
 
-  const joinUrl = `${window.location.origin}/play?code=${code}`
+  const hasRoomCode = /^\d{6}$/.test(code)
+  const joinUrl = hasRoomCode ? `${window.location.origin}/play?code=${code}` : null
 
   async function reloadQuizzes(authToken: string) {
     setQuizzesLoading(true)
@@ -526,7 +527,7 @@ function LobbyView({
 }: {
   code: string
   playerCount: number
-  joinUrl: string
+  joinUrl: string | null
   copied: 'code' | 'link' | null
   onCopy: (value: string, kind: 'code' | 'link') => void
   onStart: () => void
@@ -564,7 +565,8 @@ function LobbyView({
           </button>
           <button
             type="button"
-            onClick={() => onCopy(joinUrl, 'link')}
+            onClick={() => joinUrl && onCopy(joinUrl, 'link')}
+            disabled={!joinUrl}
             className="btn-ghost px-4 py-2.5 text-sm"
           >
             {copied === 'link' ? (
@@ -575,7 +577,9 @@ function LobbyView({
             {copied === 'link' ? 'Copied' : 'Copy join link'}
           </button>
         </div>
-        <p className="mt-3 truncate text-xs text-mist-500 sm:text-sm">Players open {joinUrl}</p>
+        <p className="mt-3 truncate text-xs text-mist-500 sm:text-sm">
+          {joinUrl ? `Players open ${joinUrl}` : 'The join link appears once the room code is ready.'}
+        </p>
       </div>
 
       <div className="panel mt-9 p-6 sm:p-8">
@@ -597,8 +601,12 @@ function LobbyView({
 
         <div className="mt-7 border-t border-white/8 pt-6">
           <p className="text-sm leading-relaxed text-mist-400">
-            Players join at <span className="text-mist-200">{joinUrl}</span>. The first question
-            goes out to everyone at the same moment.
+            {joinUrl ? (
+              <>
+                Players join at <span className="text-mist-200">{joinUrl}</span>.{' '}
+              </>
+            ) : null}
+            The first question goes out to everyone at the same moment.
           </p>
           <button type="button" onClick={onStart} disabled={!online} className="btn-primary mt-5 w-full">
             <Play className="size-4" fill="currentColor" />
