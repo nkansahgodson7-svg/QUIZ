@@ -30,7 +30,7 @@ No events other than the ones listed here are emitted or accepted.
 
 ## Authentication
 
-`host:create_room`, `host:start`, `host:end_question`, and `host:end_game` require host authentication. The REST auth token from `POST /api/auth/signup` or `POST /api/auth/login` is supplied on the Socket.IO handshake, not in the event payload:
+`host:create_room`, `host:start`, `host:end_question`, `host:pause`, `host:resume`, and `host:end_game` require host authentication. The REST auth token from `POST /api/auth/signup` or `POST /api/auth/login` is supplied on the Socket.IO handshake, not in the event payload:
 
 ```js
 const hostSocket = io('http://localhost:4000', {
@@ -67,6 +67,22 @@ Requires host auth and ownership of the room. Only valid while the room is in th
 ```
 
 Requires host auth and ownership of the room. Immediately ends the active question timer and locks answers. The question is scored and `question:result` / `host:standings` are emitted exactly as if the timer had expired. Only valid while a question is open.
+
+### `host:pause`
+
+```json
+{ "code": "123456" }
+```
+
+Requires host auth and ownership of the room. Valid while a question or its reveal is running. Freezes the shared timer, rejects answers, and emits `game:paused` to the room. Calling it while already paused or outside a live phase has no effect.
+
+### `host:resume`
+
+```json
+{ "code": "123456" }
+```
+
+Requires host auth and ownership of the room. Restarts the frozen phase with the remaining time, shifts the question window so paused time does not affect scoring, and emits `game:resumed` to the room. Calling it while not paused has no effect.
 
 ### `host:end_game`
 
@@ -148,11 +164,13 @@ Sent to every connected host and player. The host's copy includes `correctIndex`
   "startsAt": 1795614318002,
   "durationMs": 20000,
   "myChoiceIndex": 2,
-  "correctIndex": 2
+  "correctIndex": 2,
+  "paused": false,
+  "remainingMs": 14500
 }
 ```
 
-Every field is required, except `correctIndex`, which is present only in the host's copy.
+Every field is required, except `correctIndex`, which is present only in the host's copy. `paused` and `remainingMs` let a reconnecting player resync the shared timer; during a pause `remainingMs` is the frozen time left.
 
 - `correctIndex` is the zero-based correct option index. It is sent only to the host while the question is open. Players learn the answer from `question:result` after the question closes.
 - `myChoiceIndex` is always `null` for the host.
@@ -191,6 +209,69 @@ Host only. This is the live state of the current question. Sent when a question 
 - `players` contains every player currently in the room, in join order. `answered` is `true` when the player has an accepted answer, `choiceIndex` is their latest answer or `null`, and `connected` becomes `false` if their socket drops.
 
 Players never receive this event.
+
+Answers received while the game is paused are ignored and do not produce `game:answer_count` or `host:live_state`.
+
+### `game:paused`
+
+Sent to every connected host and player when the host pauses a question or its reveal.
+
+```json
+{
+  "index": 0,
+  "phase": "question",
+  "remainingMs": 14500
+}
+```
+
+`phase` is exactly `"question"` or `"reveal"`. `remainingMs` is the frozen time left in that phase.
+
+### `game:resumed`
+
+Sent to every connected host and player when the host resumes.
+
+```json
+{
+  "index": 0,
+  "phase": "question",
+  "remainingMs": 14500,
+  "startsAt": 1795614332502,
+  "durationMs": 20000
+}
+```
+
+`startsAt` and `durationMs` are the shifted question window. Clients should replace their local timer with these values.
+
+### `host:live_state`
+
+Host only. Sent when a question starts, after every accepted answer, when the question moves to reveal, and when a player disconnects or rejoins.
+
+```json
+{
+  "index": 0,
+  "total": 5,
+  "phase": "question",
+  "correctIndex": 2,
+  "answered": 27,
+  "eligible": 30,
+  "choiceCounts": [4, 7, 12, 4],
+  "players": [
+    {
+      "playerId": "string",
+      "nickname": "Ama",
+      "status": "answered",
+      "choiceIndex": 2,
+      "totalScore": 1730
+    }
+  ]
+}
+```
+
+- `phase` is exactly `"question"` or `"reveal"`.
+- `correctIndex` is the current question's correct option; this event is host-only.
+- `answered` counts accepted answers for the current question; `eligible` is the fixed count of players who may score on it.
+- `choiceCounts` has one entry per option, in option order.
+- `players` contains only eligible players. `status` is exactly `"answered"`, `"thinking"`, or `"offline"`; `choiceIndex` is `null` until they answer.
 
 ### `question:result`
 
@@ -292,11 +373,12 @@ Error codes:
 
 1. Host connects with a token, emits `host:create_room`, receives `room:created`, then `lobby:update`.
 2. Players emit `player:join`; each receives `player:joined`; the host receives `lobby:update`.
-3. Host emits `host:start`. Everyone receives `game:question` (the host copy includes `correctIndex`); host receives `game:answer_count` with `answered: 0`, `choiceCounts`, and `players`.
-4. Players emit `player:answer` as often as they like before the deadline. Host receives updated `game:answer_count` after each answer change and when players join, rejoin, or disconnect.
-5. At `startsAt + durationMs`, or when the host emits `host:end_question`, the question closes. Each connected player receives `question:result` and the host receives `host:standings`.
-6. After the reveal delay (5000 ms by default), the next `game:question` is sent automatically. No host action is required.
-7. After the final reveal, or when the host emits `host:end_game`, players receive `game:ended` with their rank/score/top 5, the host receives `game:ended` with the full leaderboard, and the session is saved.
+3. Host emits `host:start`. Everyone receives `game:question` (the host copy includes `correctIndex`); host receives `game:answer_count` with `answered: 0` and `host:live_state`.
+4. Players emit `player:answer` as often as they like before the deadline. Host receives updated `game:answer_count` and `host:live_state`.
+5. The host may emit `host:pause` at any point during the question or reveal; everyone receives `game:paused` and the shared timer freezes. `host:resume` restarts the remaining time and emits `game:resumed`.
+6. At `startsAt + durationMs`, or when the host emits `host:end_question`, the question closes. Each connected player receives `question:result`, and the host receives `host:standings` and `host:live_state` with `phase: "reveal"`.
+7. After the reveal delay (5000 ms by default), the next `game:question` is sent automatically. No host action is required.
+8. After the final reveal, or when the host emits `host:end_game`, players receive `game:ended` with their rank/score/top 5, the host receives `game:ended` with the full leaderboard, and the session is saved.
 
 ## Scoring and timing (final)
 
@@ -308,6 +390,7 @@ Error codes:
 - Wrong or missing answer: `0` points.
 - A player's countdown does not pause when they answer; they may change their answer until the deadline.
 - `host:end_question` closes early without changing the scoring formula; answers already accepted are scored normally.
+- Pausing shifts `startsAt` and `endsAt`, and accepted answer timestamps, by the paused duration, so scoring ignores paused time.
 - The reveal lasts about 5 seconds, then auto-advance.
 
 ## Accepted decisions

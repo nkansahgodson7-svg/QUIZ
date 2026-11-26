@@ -62,6 +62,8 @@ export function attachSocketHandlers(io, rooms) {
     }
 
     function requireHostRoom(payload) {
+      if (!requireHost()) return null;
+
       const room = rooms.getRoom(payload?.code);
       if (!room) {
         emitError(socket, 'ROOM_NOT_FOUND', 'Room not found. Check the code.');
@@ -150,6 +152,28 @@ export function attachSocketHandlers(io, rooms) {
     );
 
     socket.on(
+      CLIENT_EVENTS.HOST_PAUSE,
+      safeHandler(socket, (payload) => {
+        if (!requireHost()) return;
+
+        const room = requireHostRoom(payload);
+        if (!room) return;
+        room.pause();
+      }),
+    );
+
+    socket.on(
+      CLIENT_EVENTS.HOST_RESUME,
+      safeHandler(socket, (payload) => {
+        if (!requireHost()) return;
+
+        const room = requireHostRoom(payload);
+        if (!room) return;
+        room.resume();
+      }),
+    );
+
+    socket.on(
       CLIENT_EVENTS.HOST_END_GAME,
       safeHandler(socket, (payload) => {
         if (!requireHost()) return;
@@ -188,6 +212,7 @@ export function attachSocketHandlers(io, rooms) {
         const currentQuestion = room.currentQuestionPayload(player.id);
         if (currentQuestion) socket.emit(SERVER_EVENTS.GAME_QUESTION, currentQuestion);
         room.emitLiveState();
+        if (room.paused) socket.emit(SERVER_EVENTS.GAME_PAUSED, room.pausedPayload());
       }),
     );
 
@@ -231,6 +256,7 @@ export function attachSocketHandlers(io, rooms) {
           socket.emit(SERVER_EVENTS.QUESTION_RESULT, player.lastResult);
         }
         room.emitLiveState();
+        if (room.paused) socket.emit(SERVER_EVENTS.GAME_PAUSED, room.pausedPayload());
       }),
     );
 
