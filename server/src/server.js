@@ -1,6 +1,7 @@
 import { createServer as createHttpServer } from 'node:http';
 import { Server } from 'socket.io';
 import { config as defaultConfig } from './config.js';
+import { connectDb, disconnectDb } from './db.js';
 import { createApp } from './app.js';
 import { attachSocketHandlers } from './socket.js';
 import { RoomManager } from './game/RoomManager.js';
@@ -13,7 +14,9 @@ function socketCorsOrigin(raw) {
 
 export function createQuizServer(options = {}) {
   const config = { ...defaultConfig, ...options };
-  const app = createApp();
+  connectDb(config.dbPath);
+
+  const app = createApp(config);
   const httpServer = createHttpServer(app);
   const io = new Server(httpServer, {
     cors: { origin: socketCorsOrigin(config.corsOrigin) },
@@ -45,6 +48,7 @@ export function createQuizServer(options = {}) {
     if (httpServer.listening) {
       await new Promise((resolve) => httpServer.close(() => resolve()));
     }
+    disconnectDb();
   }
 
   return { app, httpServer, io, roomManager, close };

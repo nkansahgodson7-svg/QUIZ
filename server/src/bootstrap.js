@@ -1,9 +1,7 @@
 import { config } from './config.js';
-import { connectDb, disconnectDb } from './db.js';
 import { createQuizServer } from './server.js';
 
 export async function start({ installSignalHandlers = true } = {}) {
-  await connectDb(config.mongoUri);
   const server = createQuizServer();
 
   await new Promise((resolve, reject) => {
@@ -21,7 +19,7 @@ export async function start({ installSignalHandlers = true } = {}) {
   });
 
   console.log(`Quiz server listening on http://localhost:${config.port}`);
-  console.log(`MongoDB: ${config.mongoUri}`);
+  console.log(`SQLite: ${config.dbPath}`);
   console.log(`Reveal screen: ${config.revealMs}ms`);
 
   if (installSignalHandlers) {
@@ -32,7 +30,6 @@ export async function start({ installSignalHandlers = true } = {}) {
       console.log(`\n${signal} received, shutting down...`);
       try {
         await server.close();
-        await disconnectDb();
         process.exit(0);
       } catch (error) {
         console.error('Shutdown failed:', error);

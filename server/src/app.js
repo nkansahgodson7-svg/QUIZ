@@ -1,34 +1,68 @@
+import fs from 'node:fs';
+import path from 'node:path';
 import express from 'express';
 import cors from 'cors';
-import mongoose from 'mongoose';
-import { config } from './config.js';
-import authRouter from './routes/auth.js';
+import { config as defaultConfig } from './config.js';
+import { isDbConnected } from './db.js';
+import { requireLoopback } from './loopback.js';
+import { getLanAddress } from './network.js';
 import quizzesRouter from './routes/quizzes.js';
 import sessionsRouter from './routes/sessions.js';
 
-function corsOriginOption() {
-  if (config.corsOrigin === '*') return true;
-  return config.corsOrigin.split(',').map((origin) => origin.trim()).filter(Boolean);
+function corsOriginOption(raw) {
+  if (raw === '*') return true;
+  return raw.split(',').map((origin) => origin.trim()).filter(Boolean);
 }
 
-export function createApp() {
+function isReservedPath(urlPath) {
+  return (
+    urlPath === '/api'
+    || urlPath.startsWith('/api/')
+    || urlPath === '/socket.io'
+    || urlPath.startsWith('/socket.io/')
+  );
+}
+
+export function createApp(config = defaultConfig) {
   const app = express();
   app.disable('x-powered-by');
 
-  app.use(cors({ origin: corsOriginOption() }));
+  app.use(cors({ origin: corsOriginOption(config.corsOrigin) }));
   app.use(express.json({ limit: '1mb' }));
 
   app.get('/health', (_req, res) => {
-    const connected = mongoose.connection.readyState === 1;
+    const connected = isDbConnected();
     return res.status(connected ? 200 : 503).json({
       ok: connected,
       db: connected ? 'connected' : 'disconnected',
     });
   });
 
-  app.use('/api/auth', authRouter);
-  app.use('/api/quizzes', quizzesRouter);
-  app.use('/api/sessions', sessionsRouter);
+  app.get('/api/server-info', requireLoopback, (req, res) => {
+    const port = req.socket.localPort ?? config.port;
+    const lanAddress = getLanAddress();
+    return res.json({
+      lanUrl: `http://${lanAddress ?? '127.0.0.1'}:${port}`,
+      port,
+    });
+  });
+
+  app.use('/api/quizzes', requireLoopback, quizzesRouter);
+  app.use('/api/sessions', requireLoopback, sessionsRouter);
+
+  const indexFile = path.join(config.clientDir, 'index.html');
+  const hasClient = fs.existsSync(indexFile);
+
+  if (hasClient) {
+    app.use(express.static(config.clientDir));
+    app.use((req, res, next) => {
+      if (req.method !== 'GET' && req.method !== 'HEAD') return next();
+      if (isReservedPath(req.path)) return next();
+      return res.sendFile(indexFile, (error) => {
+        if (error) next(error);
+      });
+    });
+  }
 
   app.use((_req, res) => {
     res.status(404).json({ code: 'NOT_FOUND', message: 'Route not found.' });

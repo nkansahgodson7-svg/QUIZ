@@ -1,6 +1,5 @@
-import mongoose from 'mongoose';
-import { Quiz } from './models/Quiz.js';
-import { verifyHostToken } from './auth.js';
+import { getQuiz } from './db.js';
+import { isLoopbackAddress } from './loopback.js';
 import { CLIENT_EVENTS, SERVER_EVENTS } from './game/events.js';
 import { GameError } from './game/GameRoom.js';
 
@@ -27,35 +26,17 @@ function safeHandler(socket, handler) {
   };
 }
 
-function readHandshakeToken(socket) {
-  const raw = socket.handshake.auth?.token ?? socket.handshake.query?.token;
-  if (Array.isArray(raw)) return raw[0] ?? null;
-  if (typeof raw !== 'string') return null;
-  return raw.replace(/^Bearer\s+/i, '').trim() || null;
-}
-
 export function attachSocketHandlers(io, rooms) {
-  io.use((socket, next) => {
-    const token = readHandshakeToken(socket);
-    if (token) {
-      try {
-        socket.data.hostId = verifyHostToken(token);
-      } catch {
-        socket.data.hostId = null;
-      }
-    } else {
-      socket.data.hostId = null;
-    }
-    next();
-  });
-
   io.on('connection', (socket) => {
+    socket.data.isLoopback = isLoopbackAddress(
+      socket.handshake.address ?? socket.conn.remoteAddress,
+    );
     socket.data.hostRooms = new Set();
     socket.data.playerRooms = new Map();
 
     function requireHost() {
-      if (!socket.data.hostId) {
-        emitError(socket, 'AUTH_REQUIRED', 'Host authentication is required. Connect with a host token.');
+      if (!socket.data.isLoopback) {
+        emitError(socket, 'AUTH_REQUIRED', 'Host actions are only available from this computer.');
         return false;
       }
       return true;
@@ -69,10 +50,6 @@ export function attachSocketHandlers(io, rooms) {
         emitError(socket, 'ROOM_NOT_FOUND', 'Room not found. Check the code.');
         return null;
       }
-      if (room.hostId !== socket.data.hostId) {
-        emitError(socket, 'NOT_HOST', 'Only this room\'s host can control this game.');
-        return null;
-      }
       return room;
     }
 
@@ -82,12 +59,12 @@ export function attachSocketHandlers(io, rooms) {
         if (!requireHost()) return;
 
         const quizId = payload?.quizId;
-        if (typeof quizId !== 'string' || !mongoose.isValidObjectId(quizId)) {
+        if (typeof quizId !== 'string' || !quizId.trim()) {
           emitError(socket, 'QUIZ_NOT_FOUND', 'Quiz not found.');
           return;
         }
 
-        const quiz = await Quiz.findOne({ _id: quizId, hostId: socket.data.hostId });
+        const quiz = getQuiz(quizId);
         if (!quiz) {
           emitError(socket, 'QUIZ_NOT_FOUND', 'Quiz not found.');
           return;
@@ -98,8 +75,8 @@ export function attachSocketHandlers(io, rooms) {
         }
 
         const room = rooms.createRoom({
-          quiz: quiz.toObject(),
-          hostId: socket.data.hostId,
+          quiz,
+          hostId: 'local',
           hostSocketId: socket.id,
         });
 
@@ -118,10 +95,6 @@ export function attachSocketHandlers(io, rooms) {
         const room = rooms.getRoom(payload?.code);
         if (!room) {
           emitError(socket, 'ROOM_NOT_FOUND', 'Room not found. Check the code.');
-          return;
-        }
-        if (room.hostId !== socket.data.hostId) {
-          emitError(socket, 'NOT_HOST', 'Only this room\'s host can start the game.');
           return;
         }
         if (room.state === 'ended') {
@@ -143,8 +116,6 @@ export function attachSocketHandlers(io, rooms) {
     socket.on(
       CLIENT_EVENTS.HOST_END_QUESTION,
       safeHandler(socket, (payload) => {
-        if (!requireHost()) return;
-
         const room = requireHostRoom(payload);
         if (!room) return;
         room.endQuestion();
@@ -154,8 +125,6 @@ export function attachSocketHandlers(io, rooms) {
     socket.on(
       CLIENT_EVENTS.HOST_PAUSE,
       safeHandler(socket, (payload) => {
-        if (!requireHost()) return;
-
         const room = requireHostRoom(payload);
         if (!room) return;
         room.pause();
@@ -165,8 +134,6 @@ export function attachSocketHandlers(io, rooms) {
     socket.on(
       CLIENT_EVENTS.HOST_RESUME,
       safeHandler(socket, (payload) => {
-        if (!requireHost()) return;
-
         const room = requireHostRoom(payload);
         if (!room) return;
         room.resume();
@@ -176,8 +143,6 @@ export function attachSocketHandlers(io, rooms) {
     socket.on(
       CLIENT_EVENTS.HOST_END_GAME,
       safeHandler(socket, (payload) => {
-        if (!requireHost()) return;
-
         const room = requireHostRoom(payload);
         if (!room) return;
         room.endGame();

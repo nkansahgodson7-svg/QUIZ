@@ -1,4 +1,8 @@
 import 'dotenv/config';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const serverRoot = fileURLToPath(new URL('..', import.meta.url));
 
 function intFromEnv(name, fallback) {
   const raw = process.env[name];
@@ -12,9 +16,12 @@ const corsOrigin = process.env.CORS_ORIGIN || '*';
 export const config = Object.freeze({
   port: intFromEnv('PORT', 4000),
   host: process.env.HOST || '0.0.0.0',
-  mongoUri: process.env.MONGO_URI || 'mongodb://127.0.0.1:27017/quiz_platform',
-  jwtSecret: process.env.JWT_SECRET || 'dev-only-insecure-secret-change-me',
-  jwtExpiresIn: process.env.JWT_EXPIRES_IN || '7d',
+  dbPath: process.env.QUIZ_DB_PATH
+    ? path.resolve(process.env.QUIZ_DB_PATH)
+    : path.join(serverRoot, 'data', 'quiz.db'),
+  clientDir: process.env.CLIENT_DIR
+    ? path.resolve(process.env.CLIENT_DIR)
+    : path.resolve(serverRoot, '..', 'client', 'dist'),
   corsOrigin,
   revealMs: intFromEnv('REVEAL_MS', 5000),
   maxPlayersPerRoom: intFromEnv('MAX_PLAYERS_PER_ROOM', 1000),

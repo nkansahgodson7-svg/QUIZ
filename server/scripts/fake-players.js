@@ -10,9 +10,6 @@ const { values: options } = parseArgs({
     duration: { type: 'string', default: '5' },
     'answer-delay': { type: 'string', default: '1000' },
     timeout: { type: 'string', default: '' },
-    email: { type: 'string', default: process.env.QUIZ_HOST_EMAIL || '' },
-    password: { type: 'string', default: process.env.QUIZ_HOST_PASSWORD || '' },
-    token: { type: 'string', default: process.env.QUIZ_HOST_TOKEN || '' },
     'quiz-id': { type: 'string', default: process.env.QUIZ_ID || '' },
     code: { type: 'string', default: '' },
     help: { type: 'boolean', short: 'h' },
@@ -23,8 +20,11 @@ const { values: options } = parseArgs({
 if (options.help) {
   console.log(`Usage: node scripts/fake-players.js [options]
 
-Creates a host account, quiz, room, fake players, starts the game and answers.
+Creates a quiz, room, fake players, starts the game and answers.
 This exercises the full socket contract with no UI.
+
+The host socket must connect from the server machine (loopback), so keep the
+default --server URL unless you run this script on the host itself.
 
 Options:
   --server URL         Server base URL (default http://localhost:4000)
@@ -33,15 +33,11 @@ Options:
   --duration SEC       Per-question time limit for the generated quiz (default 5)
   --answer-delay MS    Max random answer delay (default 1000)
   --timeout SEC        Overall wait timeout (default computed)
-  --token TOKEN        Existing host JWT (skip signup/login)
-  --email EMAIL        Existing host email (uses --password)
-  --password PASS      Existing host password
   --quiz-id ID         Reuse a saved quiz instead of creating one
   --code CODE          Join an existing room; the host starts it separately
   -h, --help           Show this help
 
-Environment: QUIZ_SERVER, QUIZ_HOST_TOKEN, QUIZ_HOST_EMAIL,
-QUIZ_HOST_PASSWORD, QUIZ_ID.
+Environment: QUIZ_SERVER, QUIZ_ID.
 
 Examples:
   node scripts/fake-players.js --players 5 --questions 2 --duration 3
@@ -85,9 +81,8 @@ function withTimeout(promise, ms, label) {
   ]).finally(() => clearTimeout(timer));
 }
 
-async function api(path, { method = 'GET', body, token } = {}) {
+async function api(path, { method = 'GET', body } = {}) {
   const headers = { 'content-type': 'application/json' };
-  if (token) headers.authorization = `Bearer ${token}`;
   const response = await fetch(`${serverUrl}${path}`, {
     method,
     headers,
@@ -110,10 +105,9 @@ async function api(path, { method = 'GET', body, token } = {}) {
   return data;
 }
 
-function connectSocket(token) {
+function connectSocket() {
   return new Promise((resolve, reject) => {
     const socket = io(serverUrl, {
-      auth: token ? { token } : {},
       transports: ['websocket'],
       reconnection: false,
       forceNew: true,
@@ -156,27 +150,7 @@ function waitForEvent(socket, event, { predicate = () => true, timeoutMs = 10_00
   });
 }
 
-async function ensureHostToken() {
-  if (options.token) return { token: options.token, email: 'existing token' };
-
-  if (options.email) {
-    const data = await api('/api/auth/login', {
-      method: 'POST',
-      body: { email: options.email, password: options.password || 'loadtest123' },
-    });
-    return { token: data.token, email: options.email };
-  }
-
-  const email = `loadtest+${Date.now()}-${Math.floor(Math.random() * 1e6)}@example.com`;
-  const password = 'loadtest123';
-  const data = await api('/api/auth/signup', {
-    method: 'POST',
-    body: { email, password },
-  });
-  return { token: data.token, email };
-}
-
-async function ensureQuizId(token) {
+async function ensureQuizId() {
   if (options['quiz-id']) return options['quiz-id'];
 
   const questions = Array.from({ length: questionCount }, (_value, index) => {
@@ -200,7 +174,6 @@ async function ensureQuizId(token) {
 
   const data = await api('/api/quizzes', {
     method: 'POST',
-    token,
     body: { title: `Fake players ${new Date().toISOString()}`, questions },
   });
   return data.quiz.id;
@@ -209,14 +182,14 @@ async function ensureQuizId(token) {
 async function createRoom(host, quizId) {
   const created = waitForEvent(host, 'room:created', {
     timeoutMs: 15_000,
-    label: 'room:created (check host token and quiz ownership)',
+    label: 'room:created (check quiz id and loopback host access)',
   });
   host.emit('host:create_room', { quizId });
   return created;
 }
 
 async function createFakePlayer({ index, code, answerDelayMax }) {
-  const socket = await connectSocket(null);
+  const socket = await connectSocket();
   const state = {
     index,
     socket,
@@ -291,30 +264,17 @@ async function run() {
 
   let code = roomCode;
   let quizId = options['quiz-id'] || '';
-  let token = options.token || '';
-  let hostLabel = '';
 
   try {
     if (!code) {
-      if (options['quiz-id'] && !token) {
-        const auth = await ensureHostToken();
-        token = auth.token;
-        hostLabel = auth.email;
-      } else if (!token) {
-        const auth = await ensureHostToken();
-        token = auth.token;
-        hostLabel = auth.email;
-      }
-
-      quizId = await ensureQuizId(token);
-      host = await connectSocket(token);
+      quizId = await ensureQuizId();
+      host = await connectSocket();
       host.on('error', (payload) => {
         console.error(`Host socket error: ${payload?.code} ${payload?.message || ''}`);
       });
 
       const created = await createRoom(host, quizId);
       code = created.code;
-      log(`Host: ${hostLabel || 'existing token'}`);
       log(`Quiz: ${quizId}`);
     }
     if (!code) throw new Error('No room code available.');

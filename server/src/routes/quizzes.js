@@ -1,12 +1,14 @@
 import { Router } from 'express';
-import mongoose from 'mongoose';
-import { Quiz } from '../models/Quiz.js';
-import { requireHost } from '../auth.js';
-import { asyncHandler } from '../utils/asyncHandler.js';
+import {
+  createQuiz,
+  deleteQuiz,
+  getQuiz,
+  listQuizzes,
+  updateQuiz,
+} from '../db.js';
 import { normalizeQuizInput, ValidationError } from '../utils/quizInput.js';
 
 const router = Router();
-router.use(requireHost);
 
 function readInput(req, res) {
   try {
@@ -20,75 +22,42 @@ function readInput(req, res) {
   }
 }
 
-router.get(
-  '/',
-  asyncHandler(async (req, res) => {
-    const quizzes = await Quiz.find({ hostId: req.hostId }).sort({ updatedAt: -1 });
-    return res.json({ quizzes });
-  }),
-);
+function notFound(res) {
+  return res.status(404).json({ code: 'QUIZ_NOT_FOUND', message: 'Quiz not found.' });
+}
 
-router.post(
-  '/',
-  asyncHandler(async (req, res) => {
-    const input = readInput(req, res);
-    if (!input) return undefined;
+router.get('/', (_req, res) => {
+  return res.json({ quizzes: listQuizzes() });
+});
 
-    const quiz = await Quiz.create({ hostId: req.hostId, ...input });
-    return res.status(201).json({ quiz });
-  }),
-);
+router.post('/', (req, res) => {
+  const input = readInput(req, res);
+  if (!input) return undefined;
 
-router.get(
-  '/:id',
-  asyncHandler(async (req, res) => {
-    if (!mongoose.isValidObjectId(req.params.id)) {
-      return res.status(404).json({ code: 'QUIZ_NOT_FOUND', message: 'Quiz not found.' });
-    }
+  const quiz = createQuiz(input);
+  return res.status(201).json({ quiz });
+});
 
-    const quiz = await Quiz.findOne({ _id: req.params.id, hostId: req.hostId });
-    if (!quiz) {
-      return res.status(404).json({ code: 'QUIZ_NOT_FOUND', message: 'Quiz not found.' });
-    }
-    return res.json({ quiz });
-  }),
-);
+router.get('/:id', (req, res) => {
+  const quiz = getQuiz(req.params.id);
+  if (!quiz) return notFound(res);
+  return res.json({ quiz });
+});
 
-router.put(
-  '/:id',
-  asyncHandler(async (req, res) => {
-    if (!mongoose.isValidObjectId(req.params.id)) {
-      return res.status(404).json({ code: 'QUIZ_NOT_FOUND', message: 'Quiz not found.' });
-    }
+router.put('/:id', (req, res) => {
+  if (!getQuiz(req.params.id)) return notFound(res);
 
-    const quiz = await Quiz.findOne({ _id: req.params.id, hostId: req.hostId });
-    if (!quiz) {
-      return res.status(404).json({ code: 'QUIZ_NOT_FOUND', message: 'Quiz not found.' });
-    }
+  const input = readInput(req, res);
+  if (!input) return undefined;
 
-    const input = readInput(req, res);
-    if (!input) return undefined;
+  const quiz = updateQuiz(req.params.id, input);
+  if (!quiz) return notFound(res);
+  return res.json({ quiz });
+});
 
-    quiz.title = input.title;
-    quiz.questions = input.questions;
-    await quiz.save();
-    return res.json({ quiz });
-  }),
-);
-
-router.delete(
-  '/:id',
-  asyncHandler(async (req, res) => {
-    if (!mongoose.isValidObjectId(req.params.id)) {
-      return res.status(404).json({ code: 'QUIZ_NOT_FOUND', message: 'Quiz not found.' });
-    }
-
-    const result = await Quiz.deleteOne({ _id: req.params.id, hostId: req.hostId });
-    if (result.deletedCount === 0) {
-      return res.status(404).json({ code: 'QUIZ_NOT_FOUND', message: 'Quiz not found.' });
-    }
-    return res.json({ ok: true });
-  }),
-);
+router.delete('/:id', (req, res) => {
+  if (!deleteQuiz(req.params.id)) return notFound(res);
+  return res.json({ ok: true });
+});
 
 export default router;

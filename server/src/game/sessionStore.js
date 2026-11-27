@@ -1,4 +1,4 @@
-import { Session } from '../models/Session.js';
+import { createSession } from '../db.js';
 
 export async function saveGameSession(room) {
   const players = Array.from(room.players.values()).map((player) => ({
@@ -12,18 +12,18 @@ export async function saveGameSession(room) {
         choiceIndex: answer?.choiceIndex ?? null,
         correct: answer?.correct ?? false,
         points: answer?.points ?? 0,
-        answeredAt: answer?.receivedAt ? new Date(answer.receivedAt) : null,
+        answeredAt: answer?.receivedAt ? new Date(answer.receivedAt).toISOString() : null,
         responseMs: answer?.responseMs ?? null,
       };
     }),
   }));
 
-  await Session.create({
-    hostId: room.hostId,
+  createSession({
     quizId: room.quizId,
+    quizTitle: room.quiz.title,
     code: room.code,
-    startedAt: new Date(room.startedAt),
-    endedAt: new Date(room.endedAt),
+    startedAt: room.startedAt,
+    endedAt: room.endedAt,
     players,
   });
 }
