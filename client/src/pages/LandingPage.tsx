@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Link, useNavigate, useSearchParams } from 'react-router-dom'
+import { Link, Navigate, useNavigate, useSearchParams } from 'react-router-dom'
 import { ArrowRight, LogIn } from 'lucide-react'
 import { Logo } from '../components/Logo'
 
@@ -11,6 +11,12 @@ export function LandingPage() {
   )
 
   const cleanCode = code.replace(/\D/g, '').slice(0, 6)
+
+  // A scanned QR link already carries the room code, so skip the code screen
+  // and go straight to picking a nickname.
+  if (cleanCode.length === 6) {
+    return <Navigate to={`/play?code=${cleanCode}`} replace />
+  }
 
   function join(event: React.FormEvent) {
     event.preventDefault()

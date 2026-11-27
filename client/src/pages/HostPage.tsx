@@ -155,7 +155,7 @@ export function HostPage() {
 
   const lanBase = (serverInfo?.lanUrl ?? window.location.origin).replace(/\/+$/, '')
   const hasRoomCode = /^\d{6}$/.test(code)
-  const joinUrl = hasRoomCode ? `${lanBase}/?code=${code}` : null
+  const joinUrl = hasRoomCode ? `${lanBase}/play?code=${code}` : null
 
   async function reloadQuizzes() {
     setQuizzesLoading(true)
