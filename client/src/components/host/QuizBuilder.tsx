@@ -136,12 +136,10 @@ const ICON_BUTTON =
   'grid size-9 place-items-center rounded-lg border border-line bg-card text-ink-2 transition-colors hover:border-ink hover:text-ink disabled:pointer-events-none disabled:opacity-30'
 
 export function QuizBuilder({
-  token,
   quiz,
   onSaved,
   onCancel,
 }: {
-  token: string
   quiz: Quiz | null
   onSaved: (quiz: Quiz) => void
   onCancel: () => void
@@ -215,7 +213,7 @@ export function QuizBuilder({
     setSaving(true)
     setError(null)
     try {
-      const saved = quiz ? await updateQuiz(token, quiz.id, input) : await createQuiz(token, input)
+      const saved = quiz ? await updateQuiz(quiz.id, input) : await createQuiz(input)
       onSaved(saved)
     } catch (saveError) {
       setError(describeApiError(saveError))
