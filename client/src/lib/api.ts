@@ -1,18 +1,11 @@
 import type { QuestionType } from './contract'
-import { clearHostToken } from './host-storage'
 import { SERVER_URL } from './socket'
 
 const BASE_URL = SERVER_URL.replace(/\/+$/, '')
 
-export interface HostAccount {
-  id: string
-  email: string
-  createdAt?: string
-}
-
-export interface AuthResponse {
-  token: string
-  host: HostAccount
+export interface ServerInfo {
+  lanUrl: string
+  port: number
 }
 
 export interface QuizQuestion {
@@ -30,7 +23,6 @@ export interface QuizInput {
 
 export interface Quiz extends QuizInput {
   id: string
-  hostId: string
   createdAt?: string
   updatedAt?: string
 }
@@ -38,7 +30,6 @@ export interface Quiz extends QuizInput {
 export interface SessionSummary {
   id: string
   quizId: string
-  /** Present once the server includes the quiz title in the results list. */
   quizTitle?: string | null
   code: string
   startedAt: string
@@ -64,7 +55,6 @@ export interface SessionPlayer {
 
 export interface SessionDetail {
   id: string
-  hostId: string
   quizId: string
   code: string
   startedAt: string
@@ -86,7 +76,6 @@ export class ApiError extends Error {
 
 interface RequestOptions {
   method?: 'GET' | 'POST' | 'PUT' | 'DELETE'
-  token?: string | null
   body?: unknown
 }
 
@@ -97,7 +86,6 @@ function isErrorPayload(value: unknown): value is { code?: string; message?: str
 async function request<T>(path: string, options: RequestOptions = {}): Promise<T> {
   const headers: Record<string, string> = { Accept: 'application/json' }
   if (options.body !== undefined) headers['Content-Type'] = 'application/json'
-  if (options.token) headers.Authorization = `Bearer ${options.token}`
 
   let response: Response
   try {
@@ -125,7 +113,6 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
   }
 
   if (!response.ok) {
-    if (response.status === 401) clearHostToken()
     const data = isErrorPayload(payload) ? payload : null
     throw new ApiError(
       data?.message || `The server returned ${response.status}.`,
@@ -137,69 +124,50 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
   return payload as T
 }
 
-export async function signup(email: string, password: string): Promise<AuthResponse> {
-  return request<AuthResponse>('/api/auth/signup', {
-    method: 'POST',
-    body: { email, password },
-  })
+export async function fetchServerInfo(): Promise<ServerInfo> {
+  return request<ServerInfo>('/api/server-info')
 }
 
-export async function login(email: string, password: string): Promise<AuthResponse> {
-  return request<AuthResponse>('/api/auth/login', {
-    method: 'POST',
-    body: { email, password },
-  })
-}
-
-export async function fetchMe(token: string): Promise<HostAccount> {
-  const data = await request<{ host: HostAccount }>('/api/auth/me', { token })
-  return data.host
-}
-
-export async function fetchQuizzes(token: string): Promise<Quiz[]> {
-  const data = await request<{ quizzes: Quiz[] }>('/api/quizzes', { token })
+export async function fetchQuizzes(): Promise<Quiz[]> {
+  const data = await request<{ quizzes: Quiz[] }>('/api/quizzes')
   return data.quizzes
 }
 
-export async function fetchQuiz(token: string, id: string): Promise<Quiz> {
-  const data = await request<{ quiz: Quiz }>(`/api/quizzes/${encodeURIComponent(id)}`, { token })
+export async function fetchQuiz(id: string): Promise<Quiz> {
+  const data = await request<{ quiz: Quiz }>(`/api/quizzes/${encodeURIComponent(id)}`)
   return data.quiz
 }
 
-export async function createQuiz(token: string, input: QuizInput): Promise<Quiz> {
+export async function createQuiz(input: QuizInput): Promise<Quiz> {
   const data = await request<{ quiz: Quiz }>('/api/quizzes', {
     method: 'POST',
-    token,
     body: input,
   })
   return data.quiz
 }
 
-export async function updateQuiz(token: string, id: string, input: QuizInput): Promise<Quiz> {
+export async function updateQuiz(id: string, input: QuizInput): Promise<Quiz> {
   const data = await request<{ quiz: Quiz }>(`/api/quizzes/${encodeURIComponent(id)}`, {
     method: 'PUT',
-    token,
     body: input,
   })
   return data.quiz
 }
 
-export async function deleteQuiz(token: string, id: string): Promise<void> {
+export async function deleteQuiz(id: string): Promise<void> {
   await request<{ ok: boolean }>(`/api/quizzes/${encodeURIComponent(id)}`, {
     method: 'DELETE',
-    token,
   })
 }
 
-export async function fetchSessions(token: string): Promise<SessionSummary[]> {
-  const data = await request<{ sessions: SessionSummary[] }>('/api/sessions', { token })
+export async function fetchSessions(): Promise<SessionSummary[]> {
+  const data = await request<{ sessions: SessionSummary[] }>('/api/sessions')
   return data.sessions
 }
 
-export async function fetchSession(token: string, id: string): Promise<SessionDetail> {
+export async function fetchSession(id: string): Promise<SessionDetail> {
   const data = await request<{ session: SessionDetail }>(
     `/api/sessions/${encodeURIComponent(id)}`,
-    { token },
   )
   return data.session
 }

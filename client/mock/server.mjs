@@ -4,12 +4,13 @@
  *
  *   node mock/server.mjs        (or npm run mock)
  *
- * Accounts, quizzes, and sessions live in memory and reset when the mock stops.
- * Sign up from /host with any email and a 6+ character password. New accounts
- * get a demo quiz, and finished games are saved for Past Results.
+ * Quizzes and sessions live in memory and reset when the mock stops. There is
+ * no host auth; /host opens straight into a seeded demo quiz, and finished
+ * games are saved for Past Results.
  */
 import { createServer } from 'node:http'
 import { randomUUID } from 'node:crypto'
+import os from 'node:os'
 import { Server } from 'socket.io'
 
 const PORT = Number(process.env.MOCK_PORT || 4000)
@@ -75,19 +76,12 @@ const BOT_NAMES = [
   'Tobi',
 ]
 
-const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
-
 /** @type {Map<string, any>} */
 const rooms = new Map()
-/** @type {Map<string, any>} */
-const hosts = new Map()
-/** @type {Map<string, string>} */
-const hostTokens = new Map()
 /** @type {Map<string, any>} */
 const quizzes = new Map()
 /** @type {Map<string, any>} */
 const sessions = new Map()
-let hostSequence = 0
 let quizSequence = 0
 let sessionSequence = 0
 
@@ -126,23 +120,6 @@ function log(...args) {
 function fail(socket, code, message) {
   socket.emit('error', { code, message })
   log('error ->', code, message)
-}
-
-function readHostToken(socket) {
-  const raw = socket.handshake.auth?.token ?? socket.handshake.query?.token
-  if (typeof raw !== 'string') return null
-  const token = raw.replace(/^Bearer\s+/i, '').trim()
-  return token || null
-}
-
-function requireHost(socket) {
-  const token = readHostToken(socket)
-  const hostId = token ? hostTokens.get(token) : null
-  if (!hostId) {
-    fail(socket, 'AUTH_REQUIRED', 'Host authentication is required.')
-    return null
-  }
-  return hostId
 }
 
 function newCode() {
@@ -200,36 +177,15 @@ function readJson(req) {
   })
 }
 
-function publicHost(host) {
-  return { id: host.id, email: host.email, createdAt: host.createdAt }
-}
-
-function findHostById(id) {
-  for (const host of hosts.values()) {
-    if (host.id === id) return host
+function lanUrl() {
+  for (const entries of Object.values(os.networkInterfaces())) {
+    for (const entry of entries ?? []) {
+      if (!entry.internal && entry.family === 'IPv4') {
+        return `http://${entry.address}:${PORT}`
+      }
+    }
   }
-  return null
-}
-
-function authHost(req) {
-  const header = req.headers.authorization ?? ''
-  const token = header.replace(/^Bearer\s+/i, '').trim()
-  const hostId = token ? hostTokens.get(token) : null
-  return hostId ? findHostById(hostId) : null
-}
-
-function requireHttpHost(req) {
-  const host = authHost(req)
-  if (!host) {
-    throw new HttpError(401, 'AUTH_REQUIRED', 'Host authentication is required.')
-  }
-  return host
-}
-
-function issueToken(hostId) {
-  const token = `mock_${randomUUID()}`
-  hostTokens.set(token, hostId)
-  return token
+  return `http://localhost:${PORT}`
 }
 
 function normalizeQuizInput(body) {
@@ -323,11 +279,10 @@ function normalizeQuizInput(body) {
   return { title, questions }
 }
 
-function seedDemoQuiz(hostId) {
+function seedDemoQuiz() {
   const now = new Date().toISOString()
   const quiz = {
     id: `quiz_${++quizSequence}`,
-    hostId,
     title: DEMO_QUIZ.title,
     questions: DEMO_QUIZ.questions.map((question) => ({
       ...question,
@@ -353,68 +308,22 @@ async function handleHttp(req, res) {
     sendJson(res, 200, {
       ok: true,
       rooms: rooms.size,
-      hosts: hosts.size,
       quizzes: quizzes.size,
       sessions: sessions.size,
     })
     return
   }
 
-  if (req.method === 'POST' && path === '/api/auth/signup') {
-    const body = await readJson(req)
-    const email = typeof body?.email === 'string' ? body.email.trim().toLowerCase() : ''
-    const password = typeof body?.password === 'string' ? body.password : ''
-    if (!EMAIL_PATTERN.test(email) || email.length > 254) {
-      throw new HttpError(400, 'INVALID_CREDENTIALS', 'Enter a valid email address.')
-    }
-    if (password.length < 6 || password.length > 200) {
-      throw new HttpError(400, 'INVALID_CREDENTIALS', 'Password must be 6 to 200 characters.')
-    }
-    if (hosts.has(email)) {
-      throw new HttpError(
-        409,
-        'EMAIL_TAKEN',
-        'An account with that email already exists.',
-      )
-    }
-
-    const host = {
-      id: `host_${++hostSequence}`,
-      email,
-      password,
-      createdAt: new Date().toISOString(),
-    }
-    hosts.set(email, host)
-    seedDemoQuiz(host.id)
-    sendJson(res, 201, { token: issueToken(host.id), host: publicHost(host) })
-    return
-  }
-
-  if (req.method === 'POST' && path === '/api/auth/login') {
-    const body = await readJson(req)
-    const email = typeof body?.email === 'string' ? body.email.trim().toLowerCase() : ''
-    const password = typeof body?.password === 'string' ? body.password : ''
-    const host = hosts.get(email)
-    if (!host || host.password !== password) {
-      throw new HttpError(401, 'INVALID_CREDENTIALS', 'Email or password is incorrect.')
-    }
-    sendJson(res, 200, { token: issueToken(host.id), host: publicHost(host) })
-    return
-  }
-
-  if (req.method === 'GET' && path === '/api/auth/me') {
-    const host = requireHttpHost(req)
-    sendJson(res, 200, { host: publicHost(host) })
+  if (req.method === 'GET' && path === '/api/server-info') {
+    sendJson(res, 200, { lanUrl: lanUrl(), port: PORT })
     return
   }
 
   if (path === '/api/quizzes') {
-    const host = requireHttpHost(req)
-
     if (req.method === 'GET') {
-      const list = [...quizzes.values()]
-        .filter((quiz) => quiz.hostId === host.id)
-        .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
+      const list = [...quizzes.values()].sort((a, b) =>
+        b.updatedAt.localeCompare(a.updatedAt),
+      )
       sendJson(res, 200, { quizzes: list })
       return
     }
@@ -424,7 +333,6 @@ async function handleHttp(req, res) {
       const now = new Date().toISOString()
       const quiz = {
         id: `quiz_${++quizSequence}`,
-        hostId: host.id,
         title: input.title,
         questions: input.questions,
         createdAt: now,
@@ -438,10 +346,9 @@ async function handleHttp(req, res) {
 
   const quizMatch = path.match(/^\/api\/quizzes\/([^/]+)$/)
   if (quizMatch) {
-    const host = requireHttpHost(req)
     const quizId = decodeURIComponent(quizMatch[1])
     const quiz = quizzes.get(quizId)
-    if (!quiz || quiz.hostId !== host.id) {
+    if (!quiz) {
       throw new HttpError(404, 'QUIZ_NOT_FOUND', 'Quiz not found.')
     }
 
@@ -465,9 +372,7 @@ async function handleHttp(req, res) {
   }
 
   if (req.method === 'GET' && path === '/api/sessions') {
-    const host = requireHttpHost(req)
     const list = [...sessions.values()]
-      .filter((session) => session.hostId === host.id)
       .sort((a, b) => b.endedAt.localeCompare(a.endedAt))
       .map((session) => ({
         id: session.id,
@@ -484,9 +389,8 @@ async function handleHttp(req, res) {
 
   const sessionMatch = path.match(/^\/api\/sessions\/([^/]+)$/)
   if (req.method === 'GET' && sessionMatch) {
-    const host = requireHttpHost(req)
     const session = sessions.get(decodeURIComponent(sessionMatch[1]))
-    if (!session || session.hostId !== host.id) {
+    if (!session) {
       throw new HttpError(404, 'SESSION_NOT_FOUND', 'Session not found.')
     }
     sendJson(res, 200, { session })
@@ -802,7 +706,6 @@ function endGame(room) {
   const endedAt = new Date().toISOString()
   const session = {
     id: `session_${++sessionSequence}`,
-    hostId: room.hostId,
     quizId: room.quizId,
     quizTitle: room.quiz.title,
     code: room.code,
@@ -865,13 +768,10 @@ io.on('connection', (socket) => {
   log('connect', socket.id)
 
   socket.on('host:create_room', (payload) => {
-    const hostId = requireHost(socket)
-    if (!hostId) return
-
     const quizId = String(payload?.quizId ?? '').trim()
     const quiz = quizzes.get(quizId)
-    if (!quiz || quiz.hostId !== hostId) {
-      return fail(socket, 'QUIZ_NOT_FOUND', 'Quiz not found for this host.')
+    if (!quiz) {
+      return fail(socket, 'QUIZ_NOT_FOUND', 'Quiz not found.')
     }
     if (quiz.questions.length === 0) {
       return fail(socket, 'QUIZ_EMPTY', 'That quiz has no questions.')
@@ -882,7 +782,6 @@ io.on('connection', (socket) => {
       code,
       quizId,
       quiz,
-      hostId,
       hostSockets: new Set([socket.id]),
       players: new Map(),
       phase: 'lobby',
@@ -919,15 +818,9 @@ io.on('connection', (socket) => {
   })
 
   socket.on('host:start', (payload) => {
-    const hostId = requireHost(socket)
-    if (!hostId) return
-
     const code = String(payload?.code ?? '').trim()
     const room = rooms.get(code)
     if (!room) return fail(socket, 'ROOM_NOT_FOUND', 'Room not found. Check the code.')
-    if (room.hostId !== hostId) {
-      return fail(socket, 'NOT_HOST', 'Authenticated host does not own that room.')
-    }
     if (room.phase === 'ended') {
       return fail(socket, 'GAME_ENDED', 'That game has already ended.')
     }
@@ -941,14 +834,8 @@ io.on('connection', (socket) => {
   })
 
   socket.on('host:end_question', (payload) => {
-    const hostId = requireHost(socket)
-    if (!hostId) return
-
     const room = rooms.get(String(payload?.code ?? '').trim())
     if (!room) return fail(socket, 'ROOM_NOT_FOUND', 'Room not found. Check the code.')
-    if (room.hostId !== hostId) {
-      return fail(socket, 'NOT_HOST', 'Authenticated host does not own that room.')
-    }
     if (room.phase !== 'question') return
 
     for (const timer of room.timeouts) clearTimeout(timer)
@@ -957,14 +844,8 @@ io.on('connection', (socket) => {
   })
 
   socket.on('host:end_game', (payload) => {
-    const hostId = requireHost(socket)
-    if (!hostId) return
-
     const room = rooms.get(String(payload?.code ?? '').trim())
     if (!room) return fail(socket, 'ROOM_NOT_FOUND', 'Room not found. Check the code.')
-    if (room.hostId !== hostId) {
-      return fail(socket, 'NOT_HOST', 'Authenticated host does not own that room.')
-    }
     if (room.phase === 'lobby' || room.phase === 'ended') return
     endGame(room)
   })
@@ -1097,6 +978,8 @@ httpServer.on('error', (error) => {
   }
   throw error
 })
+
+seedDemoQuiz()
 
 httpServer.listen(PORT, () => {
   log(`mock server on http://localhost:${PORT}`)

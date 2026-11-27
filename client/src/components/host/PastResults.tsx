@@ -47,7 +47,7 @@ function rankPlayers(players: SessionPlayer[]): Array<SessionPlayer & { rank: nu
   })
 }
 
-export function PastResults({ token }: { token: string }) {
+export function PastResults() {
   const [sessions, setSessions] = useState<SessionSummary[]>([])
   const [quizTitles, setQuizTitles] = useState<Record<string, string>>({})
   const [loading, setLoading] = useState(true)
@@ -65,7 +65,7 @@ export function PastResults({ token }: { token: string }) {
     let cancelled = false
     setLoading(true)
     setError(null)
-    Promise.all([fetchSessions(token), fetchQuizzes(token)])
+    Promise.all([fetchSessions(), fetchQuizzes()])
       .then(([nextSessions, quizzes]) => {
         if (cancelled) return
         setSessions(nextSessions)
@@ -82,7 +82,7 @@ export function PastResults({ token }: { token: string }) {
     return () => {
       cancelled = true
     }
-  }, [token, reloadKey])
+  }, [reloadKey])
 
   useEffect(
     () => () => {
@@ -104,7 +104,7 @@ export function PastResults({ token }: { token: string }) {
     setDetailLoading(true)
     setExpandedPlayerId(null)
     try {
-      const next = await fetchSession(token, session.id)
+      const next = await fetchSession(session.id)
       if (detailRequest.current === requestId) setDetail(next)
     } catch (loadError) {
       if (detailRequest.current === requestId) setDetailError(describeApiError(loadError))

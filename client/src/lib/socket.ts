@@ -2,20 +2,19 @@ import { io } from 'socket.io-client'
 import type { GameSocket } from './contract'
 
 /**
- * Switch to the real game server with one env var:
- *   VITE_SERVER_URL=https://quiz-api.example.com
+ * Defaults to the host that served this page, so LAN clients reach the same
+ * server with no configuration. Override with VITE_SERVER_URL if needed.
  */
+const configured = (import.meta.env.VITE_SERVER_URL as string | undefined)?.trim()
+
 export const SERVER_URL =
-  (import.meta.env.VITE_SERVER_URL as string | undefined)?.trim() || 'http://localhost:4000'
+  configured || (typeof window === 'undefined' ? 'http://localhost:4000' : window.location.origin)
 
-export const IS_DEFAULT_SERVER = SERVER_URL === 'http://localhost:4000'
-
-export function createSocket(options: { token?: string } = {}): GameSocket {
+export function createSocket(): GameSocket {
   return io(SERVER_URL, {
     autoConnect: false,
     transports: ['websocket', 'polling'],
     reconnectionDelay: 600,
     reconnectionDelayMax: 3000,
-    auth: options.token ? { token: options.token } : undefined,
   })
 }

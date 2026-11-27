@@ -1,11 +1,14 @@
 import { useState } from 'react'
-import { Link, useNavigate } from 'react-router-dom'
+import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { ArrowRight, LogIn } from 'lucide-react'
 import { Logo } from '../components/Logo'
 
 export function LandingPage() {
   const navigate = useNavigate()
-  const [code, setCode] = useState('')
+  const [searchParams] = useSearchParams()
+  const [code, setCode] = useState(() =>
+    (searchParams.get('code') ?? '').replace(/\D/g, '').slice(0, 6),
+  )
 
   const cleanCode = code.replace(/\D/g, '').slice(0, 6)
 
@@ -21,7 +24,7 @@ export function LandingPage() {
         <Logo />
         <Link to="/host" className="btn-ghost px-3.5 py-2 text-sm">
           <LogIn className="size-4" />
-          Host sign in
+          Host a quiz
         </Link>
       </header>
 

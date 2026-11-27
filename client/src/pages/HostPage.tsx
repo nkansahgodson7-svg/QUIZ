@@ -1,15 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
-import {
-  Check,
-  Copy,
-  ListChecks,
-  LogOut,
-  Play,
-  RotateCcw,
-  Trophy,
-  WifiOff,
-} from 'lucide-react'
-import { AuthView, type AuthMode } from '../components/host/AuthView'
+import { Check, Copy, ListChecks, Play, RotateCcw, Trophy, WifiOff } from 'lucide-react'
+import { QRCodeSVG } from 'qrcode.react'
 import { LiveConsole } from '../components/host/LiveConsole'
 import { PastResults } from '../components/host/PastResults'
 import { QuizBuilder } from '../components/host/QuizBuilder'
@@ -17,18 +8,16 @@ import { SavedQuizzes } from '../components/host/SavedQuizzes'
 import { ConnectionPill, type ConnectionState } from '../components/ConnectionPill'
 import { ErrorBanner } from '../components/ErrorBanner'
 import { Leaderboard } from '../components/Leaderboard'
-import { PulseDot, Skeleton, Spinner } from '../components/Loading'
+import { PulseDot, Spinner } from '../components/Loading'
 import { Logo } from '../components/Logo'
 import { useCountdown } from '../hooks/useCountdown'
 import {
   deleteQuiz,
   describeApiError,
-  fetchMe,
   fetchQuizzes,
-  login,
-  signup,
-  type HostAccount,
+  fetchServerInfo,
   type Quiz,
+  type ServerInfo,
 } from '../lib/api'
 import {
   isHostGameEnded,
@@ -38,10 +27,8 @@ import {
   type HostLiveState,
   type LeaderRow,
 } from '../lib/contract'
-import { clearHostToken, loadHostToken, saveHostToken } from '../lib/host-storage'
 import { createSocket } from '../lib/socket'
 
-type AuthStatus = 'checking' | 'anonymous' | 'authenticated'
 type HostPhase = 'idle' | 'lobby' | 'live' | 'ended'
 type DashboardTab = 'quizzes' | 'results'
 
@@ -49,21 +36,13 @@ export function HostPage() {
   const socketRef = useRef<GameSocket | null>(null)
   const copyTimer = useRef<number | null>(null)
 
-  const [storedToken] = useState(() => loadHostToken())
-  const [token, setToken] = useState(storedToken)
-  const [host, setHost] = useState<HostAccount | null>(null)
-  const [authStatus, setAuthStatus] = useState<AuthStatus>(
-    storedToken ? 'checking' : 'anonymous',
-  )
-  const [authBusy, setAuthBusy] = useState(false)
-  const [authError, setAuthError] = useState<string | null>(null)
-
   const [connection, setConnection] = useState<ConnectionState>('connecting')
   const [phase, setPhase] = useState<HostPhase>('idle')
   const [tab, setTab] = useState<DashboardTab>('quizzes')
   const [builderQuiz, setBuilderQuiz] = useState<Quiz | null>(null)
   const [builderOpen, setBuilderOpen] = useState(false)
 
+  const [serverInfo, setServerInfo] = useState<ServerInfo | null>(null)
   const [quizzes, setQuizzes] = useState<Quiz[]>([])
   const [quizzesLoading, setQuizzesLoading] = useState(false)
   const [openingId, setOpeningId] = useState<string | null>(null)
@@ -82,36 +61,25 @@ export function HostPage() {
   const [copied, setCopied] = useState<'code' | 'link' | null>(null)
 
   useEffect(() => {
-    if (!storedToken) return
     let cancelled = false
-    fetchMe(storedToken)
-      .then((account) => {
-        if (cancelled) return
-        setHost(account)
-        setAuthStatus('authenticated')
-        setAuthError(null)
+    fetchServerInfo()
+      .then((info) => {
+        if (!cancelled) setServerInfo(info)
       })
-      .catch((validationError) => {
-        if (cancelled) return
-        setHost(null)
-        setToken('')
-        setAuthStatus('anonymous')
-        setAuthError(describeApiError(validationError))
+      .catch(() => {
+        /* the join URL falls back to this page's origin */
       })
     return () => {
       cancelled = true
     }
-  }, [storedToken])
+  }, [])
 
   useEffect(() => {
-    if (authStatus !== 'authenticated' || !token) return
-    void reloadQuizzes(token)
-  }, [authStatus, token])
+    void reloadQuizzes()
+  }, [])
 
   useEffect(() => {
-    if (authStatus !== 'authenticated' || !token) return
-
-    const socket = createSocket({ token })
+    const socket = createSocket()
     socketRef.current = socket
     setConnection('connecting')
 
@@ -157,7 +125,9 @@ export function HostPage() {
       setOpeningId(null)
       setStarting(false)
       if (payload.code === 'AUTH_REQUIRED') {
-        resetSession(payload.message)
+        setError(
+          'Host controls only work on the host computer. Open the app from localhost on the machine running the server.',
+        )
         return
       }
       setError(payload.message)
@@ -169,7 +139,7 @@ export function HostPage() {
       socket.disconnect()
       socketRef.current = null
     }
-  }, [authStatus, token])
+  }, [])
 
   useEffect(
     () => () => {
@@ -183,13 +153,14 @@ export function HostPage() {
     phase === 'live' ? (question?.durationMs ?? null) : null,
   )
 
+  const lanBase = (serverInfo?.lanUrl ?? window.location.origin).replace(/\/+$/, '')
   const hasRoomCode = /^\d{6}$/.test(code)
-  const joinUrl = hasRoomCode ? `${window.location.origin}/play?code=${code}` : null
+  const joinUrl = hasRoomCode ? `${lanBase}/?code=${code}` : null
 
-  async function reloadQuizzes(authToken: string) {
+  async function reloadQuizzes() {
     setQuizzesLoading(true)
     try {
-      setQuizzes(await fetchQuizzes(authToken))
+      setQuizzes(await fetchQuizzes())
     } catch (loadError) {
       setError(describeApiError(loadError))
     } finally {
@@ -208,30 +179,7 @@ export function HostPage() {
     }
   }
 
-  async function handleAuth(mode: AuthMode, email: string, password: string) {
-    setAuthBusy(true)
-    setAuthError(null)
-    try {
-      const result = mode === 'signup' ? await signup(email, password) : await login(email, password)
-      saveHostToken(result.token)
-      setToken(result.token)
-      setHost(result.host)
-      setAuthStatus('authenticated')
-      setError(null)
-    } catch (authFailure) {
-      setAuthError(describeApiError(authFailure))
-    } finally {
-      setAuthBusy(false)
-    }
-  }
-
-  function resetSession(message: string | null = null) {
-    clearHostToken()
-    setToken('')
-    setHost(null)
-    setAuthStatus('anonymous')
-    setAuthError(message)
-    setAuthBusy(false)
+  function resetSession() {
     setPhase('idle')
     setCode('')
     setPlayerCount(0)
@@ -241,8 +189,6 @@ export function HostPage() {
     setLiveState(null)
     setStandings([])
     setQuestionEnded(false)
-    setQuizzes([])
-    setQuizzesLoading(false)
     setStarting(false)
     setBuilderOpen(false)
     setBuilderQuiz(null)
@@ -251,16 +197,7 @@ export function HostPage() {
     setDeletingId(null)
     setError(null)
     setCopied(null)
-  }
-
-  function handleLogout() {
-    if (
-      phase !== 'idle' &&
-      !window.confirm('Log out? The game keeps running on the server without you.')
-    ) {
-      return
-    }
-    resetSession()
+    void reloadQuizzes()
   }
 
   function openRoom(quiz: Quiz) {
@@ -293,23 +230,6 @@ export function HostPage() {
     socketRef.current.emit('host:end_game', { code })
   }
 
-  function newRoom() {
-    setPhase('idle')
-    setCode('')
-    setPlayerCount(0)
-    setQuestion(null)
-    setAnswered(null)
-    setLeaderboard([])
-    setLiveState(null)
-    setStandings([])
-    setQuestionEnded(false)
-    setError(null)
-    setOpeningId(null)
-    setStarting(false)
-    setTab('quizzes')
-    if (token) void reloadQuizzes(token)
-  }
-
   function openBuilder(quiz: Quiz | null) {
     setBuilderQuiz(quiz)
     setBuilderOpen(true)
@@ -331,16 +251,15 @@ export function HostPage() {
         ? current.map((quiz) => (quiz.id === saved.id ? saved : quiz))
         : [saved, ...current]
     })
-    if (token) void reloadQuizzes(token)
+    void reloadQuizzes()
   }
 
   async function handleDelete(quiz: Quiz) {
-    if (!token) return
     if (!window.confirm(`Delete “${quiz.title}”? This cannot be undone.`)) return
     setDeletingId(quiz.id)
     setError(null)
     try {
-      await deleteQuiz(token, quiz.id)
+      await deleteQuiz(quiz.id)
       setQuizzes((current) => current.filter((item) => item.id !== quiz.id))
     } catch (deleteFailure) {
       setError(describeApiError(deleteFailure))
@@ -350,18 +269,6 @@ export function HostPage() {
   }
 
   function renderContent() {
-    if (authStatus === 'checking') return <CheckingView />
-    if (authStatus === 'anonymous' || !token) {
-      return (
-        <AuthView
-          busy={authBusy}
-          error={authError}
-          onDismissError={() => setAuthError(null)}
-          onSubmit={(mode, email, password) => void handleAuth(mode, email, password)}
-        />
-      )
-    }
-
     if (phase === 'lobby') {
       return (
         <LobbyView
@@ -399,14 +306,13 @@ export function HostPage() {
     }
 
     if (phase === 'ended') {
-      return <EndedView code={code} leaderboard={leaderboard} onNewRoom={newRoom} />
+      return <EndedView code={code} leaderboard={leaderboard} onNewRoom={resetSession} />
     }
 
     if (builderOpen) {
       return (
         <QuizBuilder
           key={builderQuiz?.id ?? 'new-quiz'}
-          token={token}
           quiz={builderQuiz}
           onSaved={handleQuizSaved}
           onCancel={closeBuilder}
@@ -461,7 +367,7 @@ export function HostPage() {
               onCreate={() => openBuilder(null)}
             />
           ) : (
-            <PastResults token={token} />
+            <PastResults />
           )}
         </div>
       </div>
@@ -483,56 +389,21 @@ export function HostPage() {
               </span>
             )}
           </div>
-          {authStatus === 'authenticated' && (
-            <div className="flex items-center gap-2">
-              {host && (
-                <span className="hidden max-w-[14rem] truncate text-xs text-ink-3 lg:inline">
-                  {host.email}
-                </span>
-              )}
-              <ConnectionPill state={connection} />
-              <button type="button" onClick={handleLogout} className="btn-quiet px-2.5 py-2 text-sm">
-                <LogOut className="size-4" />
-                <span className="hidden sm:inline">Log out</span>
-              </button>
-            </div>
-          )}
+          <ConnectionPill state={connection} />
         </div>
       </header>
 
       <main className="mx-auto w-full max-w-6xl flex-1 px-4 py-6 pb-[max(1.5rem,env(safe-area-inset-bottom))] sm:px-8">
-        {authStatus === 'authenticated' && (
-          <>
-            <ErrorBanner message={error} onDismiss={() => setError(null)} />
-            {connection === 'offline' && phase !== 'idle' && (
-              <div className="mb-4 flex items-center gap-2.5 rounded-xl border border-warn/25 bg-warn-soft px-3 py-2.5 text-sm font-semibold text-warn">
-                <WifiOff className="size-4 shrink-0" />
-                Connection lost — reconnecting. The game keeps running on the server.
-              </div>
-            )}
-          </>
+        <ErrorBanner message={error} onDismiss={() => setError(null)} />
+        {connection === 'offline' && phase !== 'idle' && (
+          <div className="mb-4 flex items-center gap-2.5 rounded-xl border border-warn/25 bg-warn-soft px-3 py-2.5 text-sm font-semibold text-warn">
+            <WifiOff className="size-4 shrink-0" />
+            Connection lost — reconnecting. The game keeps running on the server.
+          </div>
         )}
 
         {renderContent()}
       </main>
-    </div>
-  )
-}
-
-function CheckingView() {
-  return (
-    <div className="mx-auto my-auto w-full max-w-md py-16" role="status" aria-live="polite">
-      <span className="sr-only">Checking your host session…</span>
-      <div className="flex items-center gap-2.5">
-        <Spinner className="size-4 text-cobalt" />
-        <p className="text-sm font-semibold text-ink-2">Checking your host session…</p>
-      </div>
-      <div className="card mt-4 p-5">
-        <Skeleton className="h-4 w-48 max-w-full" />
-        <Skeleton className="mt-2 h-4 w-32" />
-        <Skeleton className="mt-4 h-10 w-full" />
-        <Skeleton className="mt-2 h-10 w-2/3" />
-      </div>
     </div>
   )
 }
@@ -587,24 +458,39 @@ function LobbyView({
         </button>
       </div>
 
-      <div className="card mt-6 p-5">
-        <p className="text-sm font-bold text-ink">Players join at</p>
-        <p className="mt-1 truncate text-base font-semibold text-cobalt">
-          {joinUrl ?? 'The join link appears once the room code is ready.'}
-        </p>
-        <button
-          type="button"
-          onClick={() => joinUrl && onCopy(joinUrl, 'link')}
-          disabled={!joinUrl}
-          className="btn-ghost mt-3 px-3 py-2 text-sm"
-        >
-          {copied === 'link' ? (
-            <Check className="size-4 text-correct" />
-          ) : (
-            <Copy className="size-4" />
-          )}
-          {copied === 'link' ? 'Copied' : 'Copy join link'}
-        </button>
+      <div className="card mt-6 flex flex-col gap-5 p-5 sm:flex-row sm:items-center sm:justify-between">
+        <div className="min-w-0">
+          <p className="text-sm font-bold text-ink">Players join at</p>
+          <p className="mt-1 break-all text-base font-semibold text-cobalt">
+            {joinUrl ?? 'The join link appears once the room code is ready.'}
+          </p>
+          <button
+            type="button"
+            onClick={() => joinUrl && onCopy(joinUrl, 'link')}
+            disabled={!joinUrl}
+            className="btn-ghost mt-3 px-3 py-2 text-sm"
+          >
+            {copied === 'link' ? (
+              <Check className="size-4 text-correct" />
+            ) : (
+              <Copy className="size-4" />
+            )}
+            {copied === 'link' ? 'Copied' : 'Copy join link'}
+          </button>
+        </div>
+        {joinUrl && (
+          <div className="shrink-0 self-center rounded-xl border border-line bg-white p-3">
+            <QRCodeSVG
+              value={joinUrl}
+              size={148}
+              marginSize={0}
+              level="M"
+              bgColor="#ffffff"
+              fgColor="#141413"
+              title={`QR code to join room ${code}`}
+            />
+          </div>
+        )}
       </div>
 
       <div className="mt-7 flex flex-wrap items-end justify-between gap-6">
