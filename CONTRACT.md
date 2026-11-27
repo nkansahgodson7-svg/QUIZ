@@ -28,17 +28,11 @@ No events other than the ones listed here are emitted or accepted.
 
 - Question `type` is exactly `"multiple_choice"` or `"true_false"`.
 
-## Authentication
+## Authentication & Host Access
 
-`host:create_room` and `host:start` require host authentication. The REST auth token from `POST /api/auth/signup` or `POST /api/auth/login` is supplied on the Socket.IO handshake, not in the event payload:
+There is no host login or JWT token. Host REST endpoints (`/api/quizzes`, `/api/sessions`, `/api/server-info`) and host Socket.IO events (`host:create_room`, `host:start`) are restricted to loopback connections (`127.0.0.1`, `::1`, `::ffff:127.0.0.1`). Non-loopback callers receive `AUTH_REQUIRED` on `host:*` events (or `403` on host REST routes).
 
-```js
-const hostSocket = io('http://localhost:4000', {
-  auth: { token: hostJwt },
-});
-```
-
-The server accepts `handshake.auth.token` or `handshake.query.token`. A leading `Bearer ` is tolerated. Player sockets do not need a token.
+Player sockets do not need any token to connect.
 
 There is no host rejoin event. If the host disconnects, the game keeps running and the result is still saved.
 
@@ -207,7 +201,7 @@ Sent to the connected host after the final reveal.
 
 `leaderboard` contains every player, ordered by `rank`. Hosts never receive `yourRank` or `yourScore`. Players never receive the full leaderboard.
 
-The result is saved to MongoDB at game end whether or not the host is connected.
+The result is saved to SQLite at game end whether or not the host is connected.
 
 ### `error`
 
@@ -221,8 +215,8 @@ Error codes:
 
 | Code | Meaning |
 | --- | --- |
-| `AUTH_REQUIRED` | Host event without a valid host token on the handshake. |
-| `QUIZ_NOT_FOUND` | Quiz does not exist or is not owned by the authenticated host. |
+| `AUTH_REQUIRED` | Host event sent from a non-loopback address. |
+| `QUIZ_NOT_FOUND` | Quiz does not exist. |
 | `QUIZ_EMPTY` | Quiz has no questions. |
 | `ROOM_NOT_FOUND` | No room with that six-digit code. |
 | `NOT_HOST` | Authenticated host does not own that room. |
