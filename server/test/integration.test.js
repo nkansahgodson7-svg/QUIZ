@@ -1,47 +1,53 @@
 import test, { before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { MongoMemoryServer } from 'mongodb-memory-server';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
 import { io as ioClient } from 'socket.io-client';
-import { connectDb, disconnectDb } from '../src/db.js';
 import { createQuizServer } from '../src/server.js';
 
-let mongod;
 let server;
 let baseUrl;
-let emailSequence = 0;
+let port;
+let tmpDir;
+let dbPath;
 
 before(async () => {
-  mongod = await MongoMemoryServer.create();
-  await connectDb(mongod.getUri());
-  server = createQuizServer({ revealMs: 50 });
+  tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'quiz-server-test-'));
+  dbPath = path.join(tmpDir, 'data', 'quiz.db');
+
+  const clientDir = path.join(tmpDir, 'client-dist');
+  fs.mkdirSync(path.join(clientDir, 'assets'), { recursive: true });
+  fs.writeFileSync(
+    path.join(clientDir, 'index.html'),
+    '<!doctype html><html><body><div id="root">quiz spa</div></body></html>',
+  );
+  fs.writeFileSync(path.join(clientDir, 'assets', 'app.js'), 'console.log("quiz");\n');
+
+  server = createQuizServer({ revealMs: 50, dbPath, clientDir });
   await new Promise((resolve, reject) => {
     server.httpServer.once('error', reject);
-    server.httpServer.listen(0, '127.0.0.1', resolve);
+    server.httpServer.listen(0, '0.0.0.0', resolve);
   });
-  baseUrl = `http://127.0.0.1:${server.httpServer.address().port}`;
+
+  port = server.httpServer.address().port;
+  baseUrl = `http://127.0.0.1:${port}`;
 });
 
 after(async () => {
   if (server) await server.close();
-  await disconnectDb();
-  if (mongod) await mongod.stop();
+  fs.rmSync(tmpDir, { recursive: true, force: true });
 });
-
-function uniqueEmail(label) {
-  emailSequence += 1;
-  return `${label}-${Date.now()}-${emailSequence}@test.local`;
-}
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-async function request(path, { method = 'GET', body, token } = {}) {
-  const headers = { 'content-type': 'application/json' };
-  if (token) headers.authorization = `Bearer ${token}`;
-  const response = await fetch(`${baseUrl}${path}`, {
+async function request(urlPath, { method = 'GET', body, base = baseUrl } = {}) {
+  const response = await fetch(`${base}${urlPath}`, {
     method,
-    headers,
+    headers: { 'content-type': 'application/json' },
     body: body === undefined ? undefined : JSON.stringify(body),
   });
   const text = await response.text();
@@ -56,30 +62,18 @@ async function request(path, { method = 'GET', body, token } = {}) {
   return { status: response.status, data };
 }
 
-async function signupHost(label = 'host') {
-  const email = uniqueEmail(label);
-  const result = await request('/api/auth/signup', {
-    method: 'POST',
-    body: { email, password: 'secret12' },
-  });
-  assert.equal(result.status, 201);
-  return { email, token: result.data.token, host: result.data.host };
-}
-
-async function createQuiz(token, questions, title = 'Test quiz') {
+async function createQuiz(questions, title = 'Test quiz') {
   const result = await request('/api/quizzes', {
     method: 'POST',
-    token,
     body: { title, questions },
   });
   assert.equal(result.status, 201, JSON.stringify(result.data));
   return result.data.quiz;
 }
 
-function connectSocket(token) {
+function connectSocket(base = baseUrl) {
   return new Promise((resolve, reject) => {
-    const socket = ioClient(baseUrl, {
-      auth: token ? { token } : {},
+    const socket = ioClient(base, {
       transports: ['websocket'],
       reconnection: false,
       forceNew: true,
@@ -159,8 +153,8 @@ function makeInbox(socket) {
   };
 }
 
-async function joinPlayer(code, nickname) {
-  const socket = await connectSocket();
+async function joinPlayer(code, nickname, base = baseUrl) {
+  const socket = await connectSocket(base);
   const inbox = makeInbox(socket);
   const joinedPromise = inbox.take('player:joined', {
     timeoutMs: 5000,
@@ -171,8 +165,8 @@ async function joinPlayer(code, nickname) {
   return { socket, inbox, joined };
 }
 
-async function createHostRoom(token, quizId) {
-  const socket = await connectSocket(token);
+async function createHostRoom(quizId, base = baseUrl) {
+  const socket = await connectSocket(base);
   const inbox = makeInbox(socket);
   const createdPromise = inbox.take('room:created', { timeoutMs: 5000 });
   socket.emit('host:create_room', { quizId });
@@ -189,11 +183,11 @@ async function waitUntil(check, timeoutMs, label) {
   throw new Error(`Timed out waiting for ${label}`);
 }
 
-async function waitForSession(token, code) {
+async function waitForSession(code) {
   let found = null;
   await waitUntil(
     async () => {
-      const result = await request('/api/sessions', { token });
+      const result = await request('/api/sessions');
       assert.equal(result.status, 200);
       found = result.data.sessions.find((session) => session.code === code);
       return Boolean(found);
@@ -201,7 +195,7 @@ async function waitForSession(token, code) {
     5000,
     'session to be saved',
   );
-  const detail = await request(`/api/sessions/${found.id}`, { token });
+  const detail = await request(`/api/sessions/${found.id}`);
   assert.equal(detail.status, 200);
   return detail.data.session;
 }
@@ -212,48 +206,19 @@ function closeSockets(...sockets) {
   }
 }
 
-test('REST: signup, login, quiz save/load and ownership', async () => {
-  const email = uniqueEmail('rest');
-  const signup = await request('/api/auth/signup', {
-    method: 'POST',
-    body: { email, password: 'secret12' },
-  });
-  assert.equal(signup.status, 201);
-  assert.ok(signup.data.token);
-  assert.equal(signup.data.host.email, email);
-  assert.equal(signup.data.host.passwordHash, undefined);
+test('REST: SQLite quiz CRUD, server info, static client and SPA fallback', async () => {
+  const health = await request('/health');
+  assert.equal(health.status, 200);
+  assert.equal(health.data.ok, true);
+  assert.equal(health.data.db, 'connected');
 
-  const duplicate = await request('/api/auth/signup', {
-    method: 'POST',
-    body: { email, password: 'secret12' },
-  });
-  assert.equal(duplicate.status, 409);
-  assert.equal(duplicate.data.code, 'EMAIL_TAKEN');
-
-  const badLogin = await request('/api/auth/login', {
-    method: 'POST',
-    body: { email, password: 'wrong-password' },
-  });
-  assert.equal(badLogin.status, 401);
-
-  const login = await request('/api/auth/login', {
-    method: 'POST',
-    body: { email, password: 'secret12' },
-  });
-  assert.equal(login.status, 200);
-  const token = login.data.token;
-
-  const me = await request('/api/auth/me', { token });
-  assert.equal(me.status, 200);
-  assert.equal(me.data.host.email, email);
-
-  const noAuth = await request('/api/quizzes');
-  assert.equal(noAuth.status, 401);
-  assert.equal(noAuth.data.code, 'AUTH_REQUIRED');
+  const info = await request('/api/server-info');
+  assert.equal(info.status, 200);
+  assert.equal(info.data.port, port);
+  assert.match(info.data.lanUrl, new RegExp(`^http://[^:]+:${port}$`));
 
   const invalidQuiz = await request('/api/quizzes', {
     method: 'POST',
-    token,
     body: { title: 'Broken', questions: [{ type: 'multiple_choice', text: 'No options' }] },
   });
   assert.equal(invalidQuiz.status, 400);
@@ -276,47 +241,75 @@ test('REST: signup, login, quiz save/load and ownership', async () => {
   ];
   const created = await request('/api/quizzes', {
     method: 'POST',
-    token,
     body: { title: 'Geography', questions },
   });
   assert.equal(created.status, 201);
   const quiz = created.data.quiz;
+  assert.ok(quiz.id);
+  assert.ok(quiz.createdAt);
+  assert.ok(quiz.updatedAt);
   assert.equal(quiz.questions.length, 2);
   assert.equal(quiz.questions[0].durationSec, 15);
   assert.deepEqual(quiz.questions[1].options, ['True', 'False']);
   assert.equal(quiz.questions[1].durationSec, 20);
 
-  const list = await request('/api/quizzes', { token });
+  const raw = new DatabaseSync(dbPath);
+  const row = raw.prepare('SELECT title, questions_json FROM quizzes WHERE id = ?').get(quiz.id);
+  assert.equal(row.title, 'Geography');
+  assert.equal(JSON.parse(row.questions_json).length, 2);
+  const tables = raw
+    .prepare("SELECT name FROM sqlite_master WHERE type = 'table'")
+    .all()
+    .map((entry) => entry.name);
+  assert.ok(tables.includes('quizzes'));
+  assert.ok(tables.includes('sessions'));
+  raw.close();
+
+  const list = await request('/api/quizzes');
   assert.equal(list.status, 200);
   assert.equal(list.data.quizzes.length, 1);
 
-  const loaded = await request(`/api/quizzes/${quiz.id}`, { token });
+  const loaded = await request(`/api/quizzes/${quiz.id}`);
   assert.equal(loaded.status, 200);
   assert.equal(loaded.data.quiz.title, 'Geography');
 
   const updated = await request(`/api/quizzes/${quiz.id}`, {
     method: 'PUT',
-    token,
     body: { title: 'Geography v2', questions },
   });
   assert.equal(updated.status, 200);
   assert.equal(updated.data.quiz.title, 'Geography v2');
 
-  const otherHost = await signupHost('other');
-  const forbidden = await request(`/api/quizzes/${quiz.id}`, { token: otherHost.token });
-  assert.equal(forbidden.status, 404);
+  const missing = await request('/api/quizzes/not-a-real-id');
+  assert.equal(missing.status, 404);
+  assert.equal(missing.data.code, 'QUIZ_NOT_FOUND');
 
-  const removed = await request(`/api/quizzes/${quiz.id}`, { method: 'DELETE', token });
+  const rootResponse = await fetch(`${baseUrl}/`);
+  assert.equal(rootResponse.status, 200);
+  assert.match(await rootResponse.text(), /quiz spa/);
+
+  const spaResponse = await fetch(`${baseUrl}/host`);
+  assert.equal(spaResponse.status, 200);
+  assert.match(await spaResponse.text(), /quiz spa/);
+
+  const assetResponse = await fetch(`${baseUrl}/assets/app.js`);
+  assert.equal(assetResponse.status, 200);
+  assert.match(await assetResponse.text(), /console\.log/);
+
+  const apiNotFound = await request('/api/not-a-route');
+  assert.equal(apiNotFound.status, 404);
+  assert.equal(apiNotFound.data.code, 'NOT_FOUND');
+
+  const removed = await request(`/api/quizzes/${quiz.id}`, { method: 'DELETE' });
   assert.equal(removed.status, 200);
   assert.equal(removed.data.ok, true);
 
-  const gone = await request(`/api/quizzes/${quiz.id}`, { token });
+  const gone = await request(`/api/quizzes/${quiz.id}`);
   assert.equal(gone.status, 404);
 });
 
 test('game flow: join, start, answer changes, scoring, auto-advance, saved session', { timeout: 30_000 }, async () => {
-  const host = await signupHost('flow');
-  const quiz = await createQuiz(host.token, [
+  const quiz = await createQuiz([
     {
       type: 'multiple_choice',
       text: 'Pick the correct answer',
@@ -333,7 +326,7 @@ test('game flow: join, start, answer changes, scoring, auto-advance, saved sessi
     },
   ]);
 
-  const hostRoom = await createHostRoom(host.token, quiz.id);
+  const hostRoom = await createHostRoom(quiz.id);
   const hostSocket = hostRoom.socket;
   const hostInbox = hostRoom.inbox;
   const code = hostRoom.code;
@@ -423,14 +416,18 @@ test('game flow: join, start, answer changes, scoring, auto-advance, saved sessi
   assert.equal(hostEnded.leaderboard[0].nickname, 'Kwame');
   assert.equal(hostEnded.leaderboard[0].totalScore, p1R2.totalScore);
 
-  const saved = await waitForSession(host.token, code);
+  const saved = await waitForSession(code);
   assert.equal(saved.code, code);
+  assert.equal(saved.quizTitle, 'Test quiz');
   assert.equal(saved.players.length, 2);
+  assert.ok(saved.startedAt);
+  assert.ok(saved.endedAt);
 
-  const listed = await request('/api/sessions', { token: host.token });
+  const listed = await request('/api/sessions');
   assert.equal(listed.status, 200);
   const listedSession = listed.data.sessions.find((session) => session.code === code);
   assert.equal(listedSession.quizTitle, 'Test quiz');
+  assert.equal(listedSession.playerCount, 2);
 
   const savedP1 = saved.players.find((player) => player.nickname === 'Kwame');
   const savedP2 = saved.players.find((player) => player.nickname === 'Kwame2');
@@ -441,15 +438,12 @@ test('game flow: join, start, answer changes, scoring, auto-advance, saved sessi
   assert.equal(savedP1.answers[1].choiceIndex, 0);
   assert.equal(savedP2.answers[1].choiceIndex, null);
   assert.equal(savedP2.answers[1].points, 0);
-  assert.ok(saved.startedAt);
-  assert.ok(saved.endedAt);
 
   closeSockets(hostSocket, playerOne.socket, playerTwo.socket);
 });
 
 test('host monitor: live state, standings, early finish controls, hidden answer key', { timeout: 30_000 }, async () => {
-  const host = await signupHost('monitor');
-  const quiz = await createQuiz(host.token, [
+  const quiz = await createQuiz([
     {
       type: 'multiple_choice',
       text: 'Question one',
@@ -466,7 +460,7 @@ test('host monitor: live state, standings, early finish controls, hidden answer 
     },
   ]);
 
-  const hostRoom = await createHostRoom(host.token, quiz.id);
+  const hostRoom = await createHostRoom(quiz.id);
   const hostSocket = hostRoom.socket;
   const hostInbox = hostRoom.inbox;
   const code = hostRoom.code;
@@ -609,7 +603,7 @@ test('host monitor: live state, standings, early finish controls, hidden answer 
   assert.equal(p2Ended.yourRank, 2);
   assert.equal(p2Ended.yourScore, p2R1.totalScore);
 
-  const saved = await waitForSession(host.token, code);
+  const saved = await waitForSession(code);
   assert.equal(saved.players.length, 3);
   assert.equal(saved.players.find((player) => player.nickname === 'Late').totalScore, 0);
 
@@ -648,62 +642,8 @@ test('host monitor: live state, standings, early finish controls, hidden answer 
   closeSockets(hostSocket, playerOne.socket, playerTwo.socket);
 });
 
-test('host pacing controls are rejected for non-hosts', { timeout: 15_000 }, async () => {
-  const hostA = await signupHost('controls-a');
-  const hostB = await signupHost('controls-b');
-  const quiz = await createQuiz(hostA.token, [
-    {
-      type: 'true_false',
-      text: 'Only the host can pace this.',
-      options: ['True', 'False'],
-      correctIndex: 0,
-      durationSec: 10,
-    },
-  ]);
-
-  const room = await createHostRoom(hostA.token, quiz.id);
-  const player = await joinPlayer(room.code, 'Player');
-
-  const otherHost = await connectSocket(hostB.token);
-  const otherInbox = makeInbox(otherHost);
-
-  otherHost.emit('host:end_question', { code: room.code });
-  const wrongHostEndQuestion = await otherInbox.take('error');
-  assert.equal(wrongHostEndQuestion.code, 'NOT_HOST');
-
-  otherHost.emit('host:end_game', { code: room.code });
-  const wrongHostEndGame = await otherInbox.take('error');
-  assert.equal(wrongHostEndGame.code, 'NOT_HOST');
-
-  player.socket.emit('host:end_question', { code: room.code });
-  const playerEndQuestion = await player.inbox.take('error');
-  assert.equal(playerEndQuestion.code, 'AUTH_REQUIRED');
-
-  player.socket.emit('host:end_game', { code: room.code });
-  const playerEndGame = await player.inbox.take('error');
-  assert.equal(playerEndGame.code, 'AUTH_REQUIRED');
-
-  // The rejected controls must not disturb the room for the real host.
-  room.socket.emit('host:start', { code: room.code });
-  const question = await player.inbox.take('game:question', {
-    predicate: (payload) => payload.index === 0,
-  });
-  assert.equal('correctIndex' in question, false);
-
-  room.socket.emit('host:end_game', { code: room.code });
-  const [hostEnded, playerEnded] = await Promise.all([
-    room.inbox.take('game:ended'),
-    player.inbox.take('game:ended'),
-  ]);
-  assert.equal(hostEnded.leaderboard.length, 1);
-  assert.equal(playerEnded.yourRank, 1);
-
-  closeSockets(otherHost, player.socket, room.socket);
-});
-
 test('rejoin keeps score; late joiner starts scoring on the next question', { timeout: 30_000 }, async () => {
-  const host = await signupHost('rejoin');
-  const quiz = await createQuiz(host.token, [
+  const quiz = await createQuiz([
     {
       type: 'multiple_choice',
       text: 'First question',
@@ -720,7 +660,7 @@ test('rejoin keeps score; late joiner starts scoring on the next question', { ti
     },
   ]);
 
-  const hostRoom = await createHostRoom(host.token, quiz.id);
+  const hostRoom = await createHostRoom(quiz.id);
   const code = hostRoom.code;
   const zoe = await joinPlayer(code, 'Zoe');
   const answerCounts = [];
@@ -806,8 +746,7 @@ test('rejoin keeps score; late joiner starts scoring on the next question', { ti
 });
 
 test('host disconnect does not stop auto-advance or result saving', { timeout: 20_000 }, async () => {
-  const host = await signupHost('hostdrop');
-  const quiz = await createQuiz(host.token, [
+  const quiz = await createQuiz([
     {
       type: 'true_false',
       text: 'Hosts can drop.',
@@ -817,7 +756,7 @@ test('host disconnect does not stop auto-advance or result saving', { timeout: 2
     },
   ]);
 
-  const hostRoom = await createHostRoom(host.token, quiz.id);
+  const hostRoom = await createHostRoom(quiz.id);
   const code = hostRoom.code;
   const player = await joinPlayer(code, 'Ama');
 
@@ -834,7 +773,7 @@ test('host disconnect does not stop auto-advance or result saving', { timeout: 2
   const ended = await player.inbox.take('game:ended', { timeoutMs: 5000 });
   assert.equal(ended.yourRank, 1);
 
-  const saved = await waitForSession(host.token, code);
+  const saved = await waitForSession(code);
   assert.equal(saved.players.length, 1);
   assert.equal(saved.players[0].nickname, 'Ama');
   assert.ok(saved.players[0].answers[0].points > 0);
@@ -842,111 +781,59 @@ test('host disconnect does not stop auto-advance or result saving', { timeout: 2
   closeSockets(player.socket);
 });
 
-test('socket errors: auth, ownership, missing room', { timeout: 15_000 }, async () => {
-  const hostA = await signupHost('auth-a');
-  const hostB = await signupHost('auth-b');
-  const quiz = await createQuiz(hostA.token, [
-    {
-      type: 'multiple_choice',
-      text: 'Valid?',
-      options: ['Yes', 'No'],
-      correctIndex: 0,
-      durationSec: 10,
-    },
-  ]);
-
-  const noAuth = await connectSocket();
-  const noAuthInbox = makeInbox(noAuth);
-  noAuth.emit('host:create_room', { quizId: quiz.id });
-  const authError = await noAuthInbox.take('error');
-  assert.equal(authError.code, 'AUTH_REQUIRED');
-
-  const hostBRoom = await connectSocket(hostB.token);
-  const hostBInbox = makeInbox(hostBRoom);
-  hostBRoom.emit('host:create_room', { quizId: quiz.id });
-  const ownershipError = await hostBInbox.take('error');
-  assert.equal(ownershipError.code, 'QUIZ_NOT_FOUND');
-
-  const hostARoom = await createHostRoom(hostA.token, quiz.id);
-  hostBRoom.emit('host:start', { code: hostARoom.code });
-  const notHostError = await hostBInbox.take('error');
-  assert.equal(notHostError.code, 'NOT_HOST');
-
-  const stranger = await connectSocket();
-  const strangerInbox = makeInbox(stranger);
-  stranger.emit('player:join', { code: '000000', nickname: 'Nobody' });
-  const missingRoomError = await strangerInbox.take('error');
-  assert.equal(missingRoomError.code, 'ROOM_NOT_FOUND');
-
-  closeSockets(noAuth, hostBRoom, hostARoom.socket, stranger);
-});
-
-test('socket errors: invalid nickname on player:join emits INVALID_NICKNAME', { timeout: 15_000 }, async () => {
-  const host = await signupHost('bad-nickname');
-  const quiz = await createQuiz(host.token, [
+test('socket errors: missing room, invalid nickname, ended game, bad rejoin token', { timeout: 30_000 }, async () => {
+  const quiz = await createQuiz([
     {
       type: 'true_false',
-      text: 'Nicknames are required.',
-      options: ['True', 'False'],
-      correctIndex: 0,
-      durationSec: 10,
-    },
-  ]);
-  const room = await createHostRoom(host.token, quiz.id);
-  const socket = await connectSocket();
-  const inbox = makeInbox(socket);
-
-  // GameRoom.addPlayer throws synchronously for a blank nickname.
-  socket.emit('player:join', { code: room.code, nickname: '   ' });
-  const error = await inbox.take('error');
-  assert.equal(error.code, 'INVALID_NICKNAME');
-
-  // The synchronous throw must not take down the process: the same socket can
-  // still join with a valid nickname.
-  const joinedPromise = inbox.take('player:joined');
-  socket.emit('player:join', { code: room.code, nickname: 'Valid' });
-  const joined = await joinedPromise;
-  assert.equal(joined.nickname, 'Valid');
-
-  closeSockets(socket, room.socket);
-});
-
-test('socket errors: joining an ended game emits GAME_ENDED', { timeout: 20_000 }, async () => {
-  const host = await signupHost('ended-join');
-  const quiz = await createQuiz(host.token, [
-    {
-      type: 'true_false',
-      text: 'This game ends quickly.',
+      text: 'Short game.',
       options: ['True', 'False'],
       correctIndex: 0,
       durationSec: 1,
     },
   ]);
-  const room = await createHostRoom(host.token, quiz.id);
+
+  const room = await createHostRoom(quiz.id);
+  const socket = await connectSocket();
+  const inbox = makeInbox(socket);
+
+  socket.emit('player:join', { code: '000000', nickname: 'Nobody' });
+  const missingRoomError = await inbox.take('error');
+  assert.equal(missingRoomError.code, 'ROOM_NOT_FOUND');
+
+  socket.emit('player:join', { code: room.code, nickname: '   ' });
+  const nicknameError = await inbox.take('error');
+  assert.equal(nicknameError.code, 'INVALID_NICKNAME');
+
+  const joinedPromise = inbox.take('player:joined');
+  socket.emit('player:join', { code: room.code, nickname: 'Valid' });
+  const joined = await joinedPromise;
+  assert.equal(joined.nickname, 'Valid');
+
+  const rejoinSocket = await connectSocket();
+  const rejoinInbox = makeInbox(rejoinSocket);
+  rejoinSocket.emit('player:rejoin', { code: room.code, playerToken: 'not-a-real-token' });
+  const tokenError = await rejoinInbox.take('error');
+  assert.equal(tokenError.code, 'INVALID_PLAYER_TOKEN');
 
   room.socket.emit('host:start', { code: room.code });
   await room.inbox.take('game:ended', { timeoutMs: 5000 });
 
-  // GameRoom.addPlayer throws synchronously once the game has ended.
   const late = await connectSocket();
   const lateInbox = makeInbox(late);
   late.emit('player:join', { code: room.code, nickname: 'Too late' });
-  const error = await lateInbox.take('error');
-  assert.equal(error.code, 'GAME_ENDED');
+  const endedError = await lateInbox.take('error');
+  assert.equal(endedError.code, 'GAME_ENDED');
 
-  // The synchronous throw must not take down the process: the host can still
-  // create another room.
   const createdPromise = room.inbox.take('room:created');
   room.socket.emit('host:create_room', { quizId: quiz.id });
   const created = await createdPromise;
   assert.match(created.code, /^\d{6}$/);
 
-  closeSockets(late, room.socket);
+  closeSockets(socket, rejoinSocket, late, room.socket);
 });
 
 test('live player state and pause/resume stay in sync for host and players', { timeout: 30_000 }, async () => {
-  const host = await signupHost('pause-flow');
-  const quiz = await createQuiz(host.token, [
+  const quiz = await createQuiz([
     {
       type: 'true_false',
       text: 'Pausing freezes the room.',
@@ -956,7 +843,7 @@ test('live player state and pause/resume stay in sync for host and players', { t
     },
   ]);
 
-  const hostRoom = await createHostRoom(host.token, quiz.id);
+  const hostRoom = await createHostRoom(quiz.id);
   const { socket: hostSocket, inbox: hostInbox, code } = hostRoom;
   const ama = await joinPlayer(code, 'Ama');
   const kofi = await joinPlayer(code, 'Kofi');
@@ -1006,7 +893,6 @@ test('live player state and pause/resume stay in sync for host and players', { t
   assert.ok(hostPaused.remainingMs > 0);
   assert.ok(hostPaused.remainingMs <= 2000);
 
-  // Answers sent while paused are rejected and do not change live stats.
   kofi.socket.emit('player:answer', { code, questionIndex: 0, choiceIndex: 0 });
   await sleep(200);
   assert.ok(
@@ -1014,7 +900,6 @@ test('live player state and pause/resume stay in sync for host and players', { t
     'paused answers must not be counted',
   );
 
-  // The frozen timer must outlast the original 2s deadline without advancing.
   await sleep(2200);
   assert.equal(ama.inbox.queued('question:result').length, 0);
 
@@ -1061,32 +946,52 @@ test('live player state and pause/resume stay in sync for host and players', { t
   closeSockets(hostSocket, ama.socket, kofi.socket);
 });
 
-test('socket errors: rejoin with a bad player token emits INVALID_PLAYER_TOKEN', { timeout: 15_000 }, async () => {
-  const host = await signupHost('bad-token');
-  const quiz = await createQuiz(host.token, [
+test('loopback guard: host REST and host socket events reject LAN callers', { timeout: 20_000 }, async (t) => {
+  const info = await request('/api/server-info');
+  assert.equal(info.status, 200);
+
+  if (!info.data.lanUrl || info.data.lanUrl.includes('127.0.0.1')) {
+    t.skip('No non-internal IPv4 address available to test LAN access.');
+    return;
+  }
+
+  const lanUrl = info.data.lanUrl;
+  for (const route of ['/api/quizzes', '/api/sessions', '/api/server-info']) {
+    let response;
+    try {
+      response = await request(route, { base: lanUrl });
+    } catch (error) {
+      t.skip(`LAN address is not reachable from this machine: ${error.message}`);
+      return;
+    }
+    assert.equal(response.status, 403, `${route} must reject LAN callers`);
+    assert.equal(response.data.code, 'AUTH_REQUIRED');
+  }
+
+  const quiz = await createQuiz([
     {
       type: 'true_false',
-      text: 'Tokens are required.',
+      text: 'Loopback only.',
       options: ['True', 'False'],
       correctIndex: 0,
       durationSec: 10,
     },
   ]);
-  const room = await createHostRoom(host.token, quiz.id);
-  const socket = await connectSocket();
-  const inbox = makeInbox(socket);
 
-  // GameRoom.rejoinPlayer throws synchronously for an unknown token.
-  socket.emit('player:rejoin', { code: room.code, playerToken: 'not-a-real-token' });
-  const error = await inbox.take('error');
-  assert.equal(error.code, 'INVALID_PLAYER_TOKEN');
+  const hostRoom = await createHostRoom(quiz.id);
+  const lanSocket = await connectSocket(lanUrl);
+  const lanInbox = makeInbox(lanSocket);
 
-  // The synchronous throw must not take down the process: the socket can still
-  // join as a new player.
-  const joinedPromise = inbox.take('player:joined');
-  socket.emit('player:join', { code: room.code, nickname: 'Recovered' });
-  const joined = await joinedPromise;
-  assert.equal(joined.nickname, 'Recovered');
+  lanSocket.emit('host:create_room', { quizId: quiz.id });
+  const createError = await lanInbox.take('error');
+  assert.equal(createError.code, 'AUTH_REQUIRED');
 
-  closeSockets(socket, room.socket);
+  lanSocket.emit('host:start', { code: hostRoom.code });
+  const startError = await lanInbox.take('error');
+  assert.equal(startError.code, 'AUTH_REQUIRED');
+
+  const remotePlayer = await joinPlayer(hostRoom.code, 'Remote', lanUrl);
+  assert.equal(remotePlayer.joined.nickname, 'Remote');
+
+  closeSockets(lanSocket, remotePlayer.socket, hostRoom.socket);
 });
